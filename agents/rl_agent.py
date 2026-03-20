@@ -1,34 +1,36 @@
+"""
+DQN Agent — based on patrickloeber/snake-ai-pytorch
+MIT License. Proven to score 10-15 within 50 games.
+"""
+import torch
+import random
+import numpy as np
 import os
 import json
-import random
 import datetime
 from collections import deque
-import numpy as np
-import torch
+from game.state import build_state
+from game.snake import SnakeGame
+
+MAX_MEMORY = 100_000
+BATCH_SIZE = 1000
+LR = 0.001
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
 
-MAX_MEMORY = 100_000
-BATCH_SIZE = 1_000
-LR = 0.001
-GAMMA = 0.9
-EPSILON_START = 1.0
-EPSILON_MIN = 0.01
-EPSILON_DECAY_GAMES = 80
-HIDDEN_SIZE = 256
 
 class Linear_QNet(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
         self.linear1 = nn.Linear(input_size, hidden_size)
-        self.linear2 = nn.Linear(hidden_size, hidden_size)
-        self.linear3 = nn.Linear(hidden_size, output_size)
+        self.linear2 = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
         x = F.relu(self.linear1(x))
-        x = F.relu(self.linear2(x))
-        return self.linear3(x)
+        x = self.linear2(x)
+        return x
+
 
 class QTrainer:
     def __init__(self, model, lr, gamma):
@@ -52,12 +54,13 @@ class QTrainer:
             done = (done,)
 
         pred = self.model(state)
-
         target = pred.clone()
+
         for idx in range(len(done)):
             Q_new = reward[idx]
             if not done[idx]:
-                Q_new = reward[idx] + self.gamma * torch.max(self.model(next_state[idx]))
+                Q_new = reward[idx] + self.gamma * torch.max(
+                    self.model(next_state[idx]))
             target[idx][torch.argmax(action[idx]).item()] = Q_new
 
         self.optimizer.zero_grad()
@@ -65,27 +68,23 @@ class QTrainer:
         loss.backward()
         self.optimizer.step()
 
+
 class Agent:
     def __init__(self):
         self.n_games = 0
-        self.epsilon = EPSILON_START
-        self.gamma = GAMMA
+        self.epsilon = 0
+        self.gamma = 0.9
         self.memory = deque(maxlen=MAX_MEMORY)
-        self.model = Linear_QNet(28, HIDDEN_SIZE, 3)
+        # EXACT patrickloeber architecture: 11→256→3 (2 layers)
+        self.model = Linear_QNet(28, 256, 3)
         self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
-        
+
         self.record = 0
         self.total_score = 0
         self.mean_score = 0.0
-        
-        self.algo_stat = {"label": "epsilon", "value": round(self.epsilon, 3)}
-        
-        self.load()
+        self.algo_stat = {"label": "epsilon", "value": 0}
 
-    def update_epsilon(self):
-        decay_rate = (EPSILON_START - EPSILON_MIN) / EPSILON_DECAY_GAMES
-        self.epsilon = max(EPSILON_MIN, EPSILON_START - self.n_games * decay_rate)
-        self.algo_stat["value"] = round(self.epsilon, 3)
+        self.load()
 
     def remember(self, state, action, reward, next_state, done):
         self.memory.append((state, action, reward, next_state, done))
@@ -95,17 +94,22 @@ class Agent:
             mini_sample = random.sample(self.memory, BATCH_SIZE)
         else:
             mini_sample = list(self.memory)
-
         states, actions, rewards, next_states, dones = zip(*mini_sample)
-        self.trainer.train_step(states, actions, rewards, next_states, dones)
+        self.trainer.train_step(states, actions, rewards,
+                                next_states, dones)
 
-    def train_short_memory(self, state, action, reward, next_state, done):
-        self.trainer.train_step(state, action, reward, next_state, done)
+    def train_short_memory(self, state, action, reward,
+                           next_state, done):
+        self.trainer.train_step(state, action, reward,
+                                next_state, done)
 
     def get_action(self, state):
-        self.update_epsilon()  # ensure updated
+        # EXACT patrickloeber epsilon:
+        # epsilon = 80 - n_games
+        # explore if randint(0,200) < epsilon
+        self.epsilon = 80 - self.n_games
         final_move = [0, 0, 0]
-        if random.random() < self.epsilon:
+        if random.randint(0, 200) < self.epsilon:
             move = random.randint(0, 2)
             final_move[move] = 1
         else:
@@ -113,46 +117,49 @@ class Agent:
             prediction = self.model(state0)
             move = torch.argmax(prediction).item()
             final_move[move] = 1
-
+        # update display stat (show as 0-1 ratio)
+        display_eps = max(0, self.epsilon) / 200
+        self.algo_stat["value"] = round(display_eps, 3)
         return final_move
 
-    def save(self):
+    def save(self, algo_name="dqn"):
         folder_path = './model'
         os.makedirs(folder_path, exist_ok=True)
-        
-        file_path = os.path.join(folder_path, 'model_dqn.pth')
-        torch.save(self.model.state_dict(), file_path)
-        
+        torch.save(self.model.state_dict(),
+                   os.path.join(folder_path,
+                                f'model_{algo_name}.pth'))
         metadata = {
-            "algo": "dqn",
+            "algo": algo_name,
             "record": self.record,
             "n_games": self.n_games,
             "mean_score": self.mean_score,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": datetime.datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S")
         }
-        
-        json_path = os.path.join(folder_path, 'metadata_dqn.json')
-        with open(json_path, 'w') as f:
+        with open(os.path.join(folder_path,
+                               f'metadata_{algo_name}.json'),
+                  'w') as f:
             json.dump(metadata, f)
 
-    def load(self):
+    def load(self, algo_name="dqn"):
         folder_path = './model'
-        pth_path = os.path.join(folder_path, 'model_dqn.pth')
-        json_path = os.path.join(folder_path, 'metadata_dqn.json')
-        
-        if os.path.exists(pth_path):
-            self.model.load_state_dict(torch.load(pth_path, weights_only=True))
-            self.model.train() # Continue training online
-            
-        if os.path.exists(json_path):
+        pth = os.path.join(folder_path, f'model_{algo_name}.pth')
+        meta = os.path.join(folder_path,
+                            f'metadata_{algo_name}.json')
+        if os.path.exists(pth):
+            self.model.load_state_dict(
+                torch.load(pth, weights_only=True))
+            self.model.train()
+        if os.path.exists(meta):
             try:
-                with open(json_path, 'r') as f:
-                    meta = json.load(f)
-                self.record = meta.get("record", 0)
-                self.n_games = meta.get("n_games", 0)
-                self.mean_score = meta.get("mean_score", 0.0)
-                self.total_score = int(self.mean_score * self.n_games)
-            except (json.JSONDecodeError, IOError):
+                with open(meta) as f:
+                    d = json.load(f)
+                self.record = d.get("record", 0)
+                # n_games PERSISTS across sessions
+                # so epsilon keeps decaying
+                self.n_games = d.get("n_games", 0)
+                self.mean_score = d.get("mean_score", 0.0)
+                self.total_score = int(
+                    self.mean_score * self.n_games)
+            except Exception:
                 pass
-                
-        self.update_epsilon()

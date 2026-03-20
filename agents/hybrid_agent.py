@@ -37,7 +37,8 @@ class HybridAgent:
             "record": self.rl.record,
             "n_games": self.rl.n_games,
             "mean_score": self.rl.mean_score,
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            "timestamp": datetime.datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S")
         }
         json_path = os.path.join(folder_path, f'metadata_{self.algo_name}.json')
         with open(json_path, 'w') as f:
@@ -58,32 +59,49 @@ class HybridAgent:
                 with open(json_path, 'r') as f:
                     meta = json.load(f)
                 self.rl.record = meta.get("record", 0)
+                # n_games persists so epsilon keeps decaying
                 self.rl.n_games = meta.get("n_games", 0)
                 self.rl.mean_score = meta.get("mean_score", 0.0)
-                self.rl.total_score = int(self.rl.mean_score * self.rl.n_games)
-            except: pass
-        self.rl.update_epsilon()
+                self.rl.total_score = int(
+                    self.rl.mean_score * self.rl.n_games)
+            except Exception:
+                pass
 
     def get_action(self, game, state):
-        dqn_action = self.rl.get_action(state)
-        
+        # Pure DQN mode — no solver
         if self.algo_name == "dqn" or self.algo_name not in self.solvers:
+            dqn_action = self.rl.get_action(state)
             return dqn_action, [], [], self.rl.algo_stat
-            
+
+        # Hybrid mode — algorithm LEADS, DQN trains in background
         snake_coords = [tuple(p) for p in game.snake]
         food_coord = tuple(game.food)
-        
-        solver_res = self.solvers[self.algo_name](snake_coords, food_coord, game.GRID_SIZE)
-        
-        action = solver_res.get('action', [1,0,0])
+
+        solver_res = self.solvers[self.algo_name](
+            snake_coords, food_coord, game.GRID_SIZE
+        )
+
+        algo_action = solver_res.get('action', [1, 0, 0])
         path = solver_res.get('path', [])
-        
-        if self.algo_name == "minimax" or len(path) > 0:
-            final_action = action
+
+        # DQN still gets action for training purposes
+        # (so it learns from every step even when algo leads)
+        dqn_action = self.rl.get_action(state)
+
+        if len(path) > 0 or self.algo_name == "minimax":
+            # Algorithm found a path — follow it
+            # DQN trained on same experience anyway
+            final_action = algo_action
         else:
+            # Algorithm found no path (dead end) — DQN takes over
             final_action = dqn_action
-            
-        return final_action, solver_res.get('explored', []), path, solver_res.get('algo_stat', self.rl.algo_stat)
+
+        return (
+            final_action,
+            solver_res.get('explored', []),
+            path,
+            solver_res.get('algo_stat', self.rl.algo_stat)
+        )
     
     @property
     def n_games(self): return self.rl.n_games

@@ -58,7 +58,7 @@ class SnakeSensors:
 
     def check_right_down(self, target):
         distance = self.dis_y_down if self.dis_y_down < self.dis_x_right else self.dis_x_right
-        if distance == self.row: return 0
+        if distance == 0: return 0
         for n in range(1, distance + 1):
             if self.board[self.head_y + n, self.head_x + n] == target:
                 return n
@@ -74,14 +74,15 @@ class SnakeSensors:
 
     def check_left_down(self, target):
         distance = self.dis_y_down if self.dis_y_down < self.dis_x_left else self.dis_x_left
-        if distance == self.row: return 0
+        if distance == 0: return 0
         for n in range(1, distance + 1):
             if self.board[self.head_y + n, self.head_x - n] == target:
                 return n
         return 0
 
     def all_eight_directions(self, target):
-        return np.array([
+        results = []
+        for val in [
             self.check_up(target),
             self.check_right_up(target),
             self.check_right(target),
@@ -90,7 +91,9 @@ class SnakeSensors:
             self.check_left_down(target),
             self.check_left(target),
             self.check_left_up(target),
-        ])
+        ]:
+            results.append(max(0, min(self.row - 1, val)))
+        return np.array(results)
 
     def distance_to_walls(self):
         return np.round(

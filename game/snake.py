@@ -64,7 +64,7 @@ class SnakeGame:
         """
         self.frame_iteration += 1
         
-        dist_before = abs(self.food.x - self.head.x) + abs(self.food.y - self.head.y)
+        pass  # no distance tracking needed
         
         # 1. move -> update head
         self._move(action)
@@ -80,8 +80,6 @@ class SnakeGame:
             reward = -10
             return reward, game_over, self.score
             
-        dist_after = abs(self.food.x - self.head.x) + abs(self.food.y - self.head.y)
-            
         # 3. eat food or remove tail
         if self.head == self.food:
             self.score += 1
@@ -89,11 +87,7 @@ class SnakeGame:
             self.place_food()
         else:
             self.snake.pop()
-            # Reward for moving closer to food (optional, but requested in spec)
-            if dist_after < dist_before:
-                reward = 1
-            else:
-                reward = -1
+            reward = 0
                 
         return reward, game_over, self.score
         

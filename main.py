@@ -70,12 +70,12 @@ async def game_loop(ws: WebSocket, algo: str, speed_ref: dict):
             fps = SPEED_FPS[str(speed_ref.get("speed", 10))]
             delay = 1.0 / fps
             
-            state_old = build_state(game)
+            state_old = build_state(game, extended=True)
             
             final_move, explored, path, algo_stat = agent.get_action(game, state_old)
             
             reward, done, score = game.play_step(final_move)
-            state_new = build_state(game)
+            state_new = build_state(game, extended=True)
             
             agent.train_short_memory(state_old, final_move, reward, state_new, done)
             agent.remember(state_old, final_move, reward, state_new, done)
@@ -101,6 +101,10 @@ async def game_loop(ws: WebSocket, algo: str, speed_ref: dict):
             if done:
                 game.reset()
                 agent.n_games += 1
+                try:
+                    agent.rl.lifetime_games += 1
+                except AttributeError:
+                    pass
                 agent.train_long_memory()
                 
                 if score > agent.record:
@@ -115,8 +119,14 @@ async def game_loop(ws: WebSocket, algo: str, speed_ref: dict):
         except asyncio.CancelledError:
             break
         except Exception as e:
-            print(f"Game loop error: {e}")
-            break
+            import traceback
+            print(f"Game loop error (recovering): {e}")
+            traceback.print_exc()
+            try:
+                game.reset()
+            except Exception:
+                game = SnakeGame()
+            continue
 
 @app.websocket("/ws/{algo}")
 async def websocket_endpoint(websocket: WebSocket, algo: str):
