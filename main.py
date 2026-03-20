@@ -4,6 +4,7 @@ import os
 import glob
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Dict
 
@@ -12,6 +13,10 @@ from game.state import build_state
 from agents.hybrid_agent import HybridAgent
 
 app = FastAPI()
+
+app.mount("/static",
+          StaticFiles(directory="frontend"),
+          name="static")
 
 app.add_middleware(
     CORSMiddleware,
