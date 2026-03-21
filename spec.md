@@ -1,4 +1,4 @@
-# spec.md — AI Snake Arena
+# spec.md — Deep Reinforcement Learning Snake Agent
 
 ## Project Overview
 

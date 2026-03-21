@@ -1,4 +1,4 @@
-# agents.md — AI Snake Arena
+# agents.md — Deep Reinforcement Learning Snake Agent
 ## Global rules for every Antigravity agent
 
 ---

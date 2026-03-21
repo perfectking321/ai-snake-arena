@@ -1,9 +1,15 @@
-# AI Snake Arena
+# Deep Reinforcement Learning Snake Agent
 
 A Snake game where AI algorithms learn to play by themselves.
 Watch the agent go from dying in 2 moves to scoring 30+ over 100 games.
 
 Built for FT3 Application Development — SRMIST 2026.
+
+## Screenshots
+
+![Arena View](assets/2026-03-21_23-15-31.png)
+![Training Progress](assets/2026-03-21_23-15-41.png)
+![Algorithm Output](assets/2026-03-21_23-17-18.png)
 
 ---
 
