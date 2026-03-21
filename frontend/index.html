@@ -143,6 +143,56 @@
     .hero-card-title { font-weight: 700; font-size: 1rem; color: var(--text-main); margin-bottom: 0.25rem; }
     .hero-card-sub { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;}
 
+    /* --- Side Nav --- */
+    #side-nav {
+      position: fixed;
+      left: -260px; /* Hidden initially */
+      top: 0;
+      width: 240px;
+      height: 100vh;
+      background: rgba(10, 10, 12, 0.95);
+      border-right: 1px solid var(--panel-border);
+      z-index: 100;
+      display: flex;
+      flex-direction: column;
+      padding: 3rem 1.5rem;
+      transition: left 0.6s cubic-bezier(0.65, 0, 0.35, 1);
+      backdrop-filter: blur(12px);
+    }
+    #side-nav.active {
+      left: 0;
+    }
+    .side-nav-title {
+      font-size: 0.75rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.15em;
+      margin-bottom: 2rem;
+      padding-left: 1rem;
+      font-weight: 700;
+    }
+    .side-nav-item {
+      padding: 0.85rem 1rem;
+      color: var(--text-muted);
+      font-weight: 600;
+      font-size: 0.9rem;
+      cursor: pointer;
+      border-radius: 8px;
+      transition: all 0.2s;
+      margin-bottom: 0.5rem;
+      border: 1px solid transparent;
+    }
+    .side-nav-item:hover {
+      background: rgba(255, 255, 255, 0.05);
+      color: var(--text-main);
+    }
+    .side-nav-item.active {
+      background: rgba(255, 255, 255, 0.08);
+      color: var(--text-main);
+      border-color: var(--nav-accent);
+      box-shadow: 0 0 15px rgba(0,0,0,0.3);
+    }
+
     /* --- Application Layout --- */
     #app-container {
       width: 100vw;
@@ -166,7 +216,8 @@
       width: 100vw;
       height: 100vh;
       flex-shrink: 0;
-      padding: 4rem 2rem;
+      /* Add 240px padding on the left for the sidebar */
+      padding: 4rem 2rem 4rem 260px;
       display: flex;
       flex-direction: column;
       align-items: center;
@@ -438,48 +489,7 @@
   letter-spacing: 0.04em;
 }
 
-#hl-5 {
-  opacity: 0;
-  transform: translateY(20px);
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.6rem;
-}
 
-#hero-cta {
-  padding: 0.85rem 2.2rem;
-  background: rgba(124,110,247,0.12);
-  border: 1px solid rgba(124,110,247,0.5);
-  border-radius: 999px;
-  color: #c4b9ff;
-  font-size: 0.95rem;
-  font-weight: 600;
-  cursor: pointer;
-  transition: all 0.25s ease;
-  letter-spacing: 0.02em;
-}
-
-#hero-cta:hover {
-  background: rgba(124,110,247,0.25);
-  border-color: #7c6ef7;
-  color: #ffffff;
-  transform: translateY(-2px);
-}
-
-#hero-scroll-hint {
-  font-size: 0.72rem;
-  color: #333344;
-  letter-spacing: 0.12em;
-  text-transform: uppercase;
-  margin: 0;
-  animation: pulse-hint 2s ease-in-out infinite;
-}
-
-@keyframes pulse-hint {
-  0%, 100% { opacity: 0.4; }
-  50% { opacity: 1; }
-}
 
 #hero-progress {
   position: absolute;
@@ -510,6 +520,11 @@ body.scroll-locked {
 </head>
 <body>
 
+  <nav id="side-nav">
+    <div class="side-nav-title">Algorithms</div>
+    <div id="side-nav-links"></div>
+  </nav>
+
   <!-- Hero Section -->
   <div id="app-container">
     <section id="hero">
@@ -538,12 +553,7 @@ body.scroll-locked {
         <span class="tech-tag">28-Input State</span>
         <span class="tech-tag">DQN</span>
       </div>
-      <div id="hl-5">
-        <button id="hero-cta" onclick="unlockScroll()">
-          Explore the algorithms ↓
-        </button>
-        <p id="hero-scroll-hint">scroll to reveal</p>
-      </div>
+
       <div id="hero-cards"></div>
     </div>
 
@@ -587,8 +597,17 @@ body.scroll-locked {
     // --- Generate Sections ---
     const container = document.getElementById('main-slider');
     const cardsContainer = document.getElementById('hero-cards');
+    const sideNavLinks = document.getElementById('side-nav-links');
     
     ALGOS.forEach((algo, index) => {
+      // Generate Side Nav Item
+      const navItem = document.createElement('div');
+      navItem.className = 'side-nav-item';
+      navItem.style.setProperty('--nav-accent', ACCENTS[algo.id]);
+      navItem.textContent = algo.name;
+      navItem.onclick = () => jumpToSection(index);
+      navItem.dataset.index = index;
+      sideNavLinks.appendChild(navItem);
       // 1. Generate Hover Card
       const card = document.createElement('div');
       card.className = 'hero-card';
@@ -901,7 +920,7 @@ body.scroll-locked {
   // ── Scrollytelling & Locked L-Shape Scroll ──────────────────────────
   gsap.registerPlugin(ScrollTrigger);
 
-  const HERO_LINES = ['#hl-eyebrow', '#hl-1', '#hl-2', '#hl-3', '#hl-4', '#hl-5'];
+  const HERO_LINES = ['#hl-eyebrow', '#hl-1', '#hl-2', '#hl-3', '#hl-4'];
   let revealIndex = 0;
   let cardsRevealed = false;
   let currentSlide = -1; // -1 is Hero, 0-6 are Algo sections
@@ -955,13 +974,27 @@ body.scroll-locked {
   };
 
   function updateSlider() {
+    const sideNav = document.getElementById('side-nav');
+    const navItems = document.querySelectorAll('.side-nav-item');
+
     if (currentSlide === -1) {
       // Show Hero (Vertical Scroll Up)
       appContainer.style.transform = `translateY(0)`;
+      sideNav.classList.remove('active');
     } else {
       // Show Sections (Vertical Scroll Down, then Horizontal)
       appContainer.style.transform = `translateY(-100vh)`;
       slider.style.transform = `translateX(-${currentSlide * 100}vw)`;
+      sideNav.classList.add('active');
+      
+      // Update active state on nav items
+      navItems.forEach(item => {
+        if (parseInt(item.dataset.index) === currentSlide) {
+          item.classList.add('active');
+        } else {
+          item.classList.remove('active');
+        }
+      });
     }
   }
 
