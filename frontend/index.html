@@ -30,7 +30,7 @@
       background-color: var(--bg-color);
       color: var(--text-main);
       font-family: var(--font-family);
-      overflow-x: hidden;
+      overflow: hidden; /* Lock native scrolling entirely */
     }
 
     h1 { font-size: 4rem; font-weight: 800; letter-spacing: -0.05em; margin-bottom: 1rem; text-shadow: 0 4px 12px rgba(0,0,0,0.5); }
@@ -109,53 +109,68 @@
       60% { transform: translate(-50%, -7px); }
     }
 
-    /* --- Nav Strip --- */
-    #nav-strip {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      background: rgba(10, 10, 12, 0.9);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--panel-border);
-      padding: 1rem;
+    /* --- Hover Cards --- */
+    #hero-cards {
       display: flex;
+      flex-wrap: wrap;
       justify-content: center;
       gap: 1rem;
-      flex-wrap: wrap;
+      margin-top: 2rem;
+      opacity: 0; /* Hidden initially for GSAP */
+      pointer-events: none; /* Disabled until revealed */
+    }
+    #hero-cards.active { pointer-events: all; }
+
+    .hero-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      padding: 1rem 1.5rem;
+      border-radius: 12px;
+      cursor: pointer;
+      text-align: left;
+      min-width: 180px;
+      transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+      border-top: 3px solid var(--card-accent);
+      opacity: 0; /* Individual stagger state */
+      transform: translateY(20px);
+    }
+    .hero-card:hover {
+      transform: scale(1.05) translateY(-5px) !important;
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 10px 20px rgba(0,0,0,0.4);
+      border-color: var(--card-accent);
+    }
+    .hero-card-title { font-weight: 700; font-size: 1rem; color: var(--text-main); margin-bottom: 0.25rem; }
+    .hero-card-sub { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;}
+
+    /* --- Application Layout --- */
+    #app-container {
+      width: 100vw;
+      height: 200vh; /* 100vh Hero + 100vh Slider */
+      transform: translateY(0);
+      transition: transform 0.8s cubic-bezier(0.65, 0, 0.35, 1);
+      will-change: transform;
     }
 
-    .nav-pill {
-      background: transparent;
-      color: var(--text-muted);
-      border: 1px solid var(--panel-border);
-      padding: 0.6rem 1.2rem;
-      border-radius: 999px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
+    #main-slider {
+      display: flex;
+      width: 700vw; /* 7 sections * 100vw */
+      height: 100vh;
+      transform: translateX(0);
+      transition: transform 0.8s cubic-bezier(0.65, 0, 0.35, 1);
+      will-change: transform;
     }
-    .nav-pill:hover, .nav-pill.active {
-      color: var(--text-main);
-      border-color: var(--pill-color, white);
-      box-shadow: 0 0 15px rgba(255,255,255,0.05);
-    }
-    .nav-pill[data-algo="dqn"] { --pill-color: var(--color-dqn); }
-    .nav-pill[data-algo="bfs"] { --pill-color: var(--color-bfs); }
-    .nav-pill[data-algo="dfs"] { --pill-color: var(--color-dfs); }
-    .nav-pill[data-algo="ucs"] { --pill-color: var(--color-ucs); }
-    .nav-pill[data-algo="astar"] { --pill-color: var(--color-astar); }
-    .nav-pill[data-algo="bestfirst"] { --pill-color: var(--color-bestfirst); }
-    .nav-pill[data-algo="minimax"] { --pill-color: var(--color-minimax); }
-    .nav-pill.active { background: rgba(255,255,255,0.08); }
 
     /* --- Algo Section --- */
     .algo-section {
-      padding: 6rem 2rem;
-      border-bottom: 1px solid var(--panel-border);
+      width: 100vw;
+      height: 100vh;
+      flex-shrink: 0;
+      padding: 4rem 2rem;
       display: flex;
       flex-direction: column;
       align-items: center;
+      justify-content: center;
     }
 
     .section-header {
@@ -496,7 +511,8 @@ body.scroll-locked {
 <body>
 
   <!-- Hero Section -->
-  <section id="hero">
+  <div id="app-container">
+    <section id="hero">
 
     <video
       id="hero-video"
@@ -528,6 +544,7 @@ body.scroll-locked {
         </button>
         <p id="hero-scroll-hint">scroll to reveal</p>
       </div>
+      <div id="hero-cards"></div>
     </div>
 
     <div id="hero-progress">
@@ -536,19 +553,10 @@ body.scroll-locked {
 
   </section>
 
-  <!-- Nav Strip -->
-  <nav id="nav-strip">
-    <button class="nav-pill active" data-algo="dqn" onclick="document.getElementById('sec-dqn').scrollIntoView({behavior:'smooth'})">Pure DQN</button>
-    <button class="nav-pill" data-algo="bfs" onclick="document.getElementById('sec-bfs').scrollIntoView({behavior:'smooth'})">DQN + BFS</button>
-    <button class="nav-pill" data-algo="dfs" onclick="document.getElementById('sec-dfs').scrollIntoView({behavior:'smooth'})">DQN + DFS</button>
-    <button class="nav-pill" data-algo="ucs" onclick="document.getElementById('sec-ucs').scrollIntoView({behavior:'smooth'})">DQN + UCS</button>
-    <button class="nav-pill" data-algo="astar" onclick="document.getElementById('sec-astar').scrollIntoView({behavior:'smooth'})">DQN + A*</button>
-    <button class="nav-pill" data-algo="bestfirst" onclick="document.getElementById('sec-bestfirst').scrollIntoView({behavior:'smooth'})">DQN + Best-First</button>
-    <button class="nav-pill" data-algo="minimax" onclick="document.getElementById('sec-minimax').scrollIntoView({behavior:'smooth'})">DQN + Minimax</button>
-  </nav>
-
   <!-- Main Container -->
-  <main id="sections-container"></main>
+    <div id="main-slider">
+      </div>
+  </div>
 
   <script>
     // --- Configuration ---
@@ -577,9 +585,22 @@ body.scroll-locked {
     const CELL_PX = CANVAS_PX / GRID_SIZE;
 
     // --- Generate Sections ---
-    const container = document.getElementById('sections-container');
+    const container = document.getElementById('main-slider');
+    const cardsContainer = document.getElementById('hero-cards');
     
-    ALGOS.forEach(algo => {
+    ALGOS.forEach((algo, index) => {
+      // 1. Generate Hover Card
+      const card = document.createElement('div');
+      card.className = 'hero-card';
+      card.style.setProperty('--card-accent', ACCENTS[algo.id]);
+      card.innerHTML = `
+        <div class="hero-card-title">${algo.name}</div>
+        <div class="hero-card-sub">${algo.badge}</div>
+      `;
+      card.onclick = () => jumpToSection(index);
+      cardsContainer.appendChild(card);
+
+      // 2. Generate Section (Keep existing section.innerHTML code!)
       const section = document.createElement('section');
       section.id = `sec-${algo.id}`;
       section.className = 'algo-section';
@@ -874,139 +895,143 @@ body.scroll-locked {
         renderFrame(ctx, {}, ACCENTS[algo.id]);
     });
 
-    // Sub-Task M3-03: IntersectionObserver for Sticky Nav highlighting
-    const navPills = document.querySelectorAll('.nav-pill');
-    const sections = document.querySelectorAll('.algo-section');
-    const observer = new IntersectionObserver((entries) => {
-      let isAnyIntersecting = false;
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-            navPills.forEach(p => p.classList.remove('active'));
-            const activePill = document.querySelector(`.nav-pill[data-algo="${entry.target.dataset.algo}"]`);
-            if (activePill) activePill.classList.add('active');
-            isAnyIntersecting = true;
-        }
-      });
-      // Fallback: If at very top, highlight pure-dqn.
-      if (!isAnyIntersecting && window.scrollY < 200) {
-          navPills.forEach(p => p.classList.remove('active'));
-          document.querySelector('.nav-pill[data-algo="dqn"]').classList.add('active');
-      }
-    }, { threshold: 0.5, rootMargin: '-10% 0px -40% 0px' });
-    sections.forEach(sec => observer.observe(sec));
 
 
-  // ── Hero Scrollytelling ──────────────────────────
 
+  // ── Scrollytelling & Locked L-Shape Scroll ──────────────────────────
   gsap.registerPlugin(ScrollTrigger);
 
-  const HERO_LINES = [
-    '#hl-eyebrow',
-    '#hl-1',
-    '#hl-2',
-    '#hl-3',
-    '#hl-4',
-    '#hl-5'
-  ];
-
+  const HERO_LINES = ['#hl-eyebrow', '#hl-1', '#hl-2', '#hl-3', '#hl-4', '#hl-5'];
   let revealIndex = 0;
-  let heroUnlocked = false;
+  let cardsRevealed = false;
+  let currentSlide = -1; // -1 is Hero, 0-6 are Algo sections
   let scrollCooldown = false;
 
-  const progressBar = document.getElementById(
-    'hero-progress-bar');
+  const progressBar = document.getElementById('hero-progress-bar');
+  const appContainer = document.getElementById('app-container');
+  const slider = document.getElementById('main-slider');
+  // cardsContainer already declared above
 
-  function updateProgress() {
-    const pct = (revealIndex / HERO_LINES.length) * 100;
-    progressBar.style.width = pct + '%';
-  }
+  // Fade in first lines automatically
+  setTimeout(() => { revealNext(); setTimeout(() => revealNext(), 500); }, 300);
 
   function revealNext() {
-    if (revealIndex >= HERO_LINES.length) {
-      heroUnlocked = true;
-      return;
+    if (revealIndex === 0) {
+      gsap.to('#hero-video', { opacity: 0.55, duration: 1.5, ease: 'power2.out' });
+      gsap.to('#hero-overlay', { opacity: 1, duration: 1.5, ease: 'power2.out' });
     }
-    const el = document.querySelector(
-      HERO_LINES[revealIndex]);
-    gsap.to(el, {
-      opacity: 1,
-      y: 0,
-      duration: 0.75,
-      ease: 'power3.out'
+
+    if (revealIndex < HERO_LINES.length) {
+      const el = document.querySelector(HERO_LINES[revealIndex]);
+      gsap.to(el, { opacity: 1, y: 0, duration: 0.75, ease: 'power3.out' });
+      revealIndex++;
+      progressBar.style.width = (revealIndex / HERO_LINES.length) * 100 + '%';
+    } 
+    
+    if (revealIndex >= HERO_LINES.length && !cardsRevealed) {
+      revealCards();
+    }
+  }
+
+  function revealCards() {
+    if (cardsRevealed) return;
+    cardsRevealed = true;
+    gsap.to(cardsContainer, { opacity: 1, duration: 0.5 });
+    gsap.to('.hero-card', { 
+      opacity: 1, 
+      y: 0, 
+      stagger: 0.1, 
+      duration: 0.6, 
+      ease: 'back.out(1.7)',
+      onComplete: () => cardsContainer.style.pointerEvents = 'all'
     });
-    revealIndex++;
-    updateProgress();
-    if (revealIndex >= HERO_LINES.length) {
-      heroUnlocked = true;
-      progressBar.style.width = '100%';
+  }
+
+  // Called by clicking a card
+  window.jumpToSection = (index) => {
+    cardsRevealed = true; // Ensure logic doesn't break if clicked early
+    currentSlide = index;
+    updateSlider();
+  };
+
+  function updateSlider() {
+    if (currentSlide === -1) {
+      // Show Hero (Vertical Scroll Up)
+      appContainer.style.transform = `translateY(0)`;
+    } else {
+      // Show Sections (Vertical Scroll Down, then Horizontal)
+      appContainer.style.transform = `translateY(-100vh)`;
+      slider.style.transform = `translateX(-${currentSlide * 100}vw)`;
     }
   }
 
-  function unlockScroll() {
-    document.body.classList.remove('scroll-locked');
-    setTimeout(() => {
-      document.getElementById('nav-strip')
-        .scrollIntoView({ behavior: 'smooth' });
-    }, 100);
-  }
-
-  // Lock scroll on load
-  document.body.classList.add('scroll-locked');
-
-  // Reveal eyebrow + title on load automatically
-  setTimeout(() => {
-    revealNext(); // eyebrow
-    setTimeout(() => revealNext(), 500); // h1
-  }, 300);
-
-  // Wheel handler — each scroll tick = next line
-  window.addEventListener('wheel', function(e) {
+  function handleScroll(direction) {
     if (scrollCooldown) return;
 
-    if (e.deltaY > 0 && !heroUnlocked) {
-      // scrolling down, hero not done
-      e.preventDefault();
-      scrollCooldown = true;
-      setTimeout(() => { scrollCooldown = false; }, 550);
-      revealNext();
-    } else if (heroUnlocked) {
-      // all lines shown, unlock page
-      document.body.classList.remove('scroll-locked');
+    if (currentSlide === -1) {
+      // In Hero Section
+      if (direction > 0) {
+        if (!cardsRevealed) {
+          triggerCooldown(550);
+          revealNext();
+        } else {
+          // Cards are shown, slide DOWN to first algo
+          triggerCooldown(1000);
+          currentSlide = 0;
+          updateSlider();
+        }
+      }
+    } else {
+      // In Slider Sections
+      triggerCooldown(1000); 
+      if (direction > 0 && currentSlide < ALGOS.length - 1) {
+        currentSlide++; // Slide Left
+      } else if (direction < 0) {
+        currentSlide--; // Slide Right (or Up back to Hero)
+      }
+      updateSlider();
     }
+  }
+
+  function triggerCooldown(ms) {
+    scrollCooldown = true;
+    setTimeout(() => { scrollCooldown = false; }, ms);
+  }
+
+  // Input Listeners
+  window.addEventListener('wheel', (e) => {
+    e.preventDefault(); 
+    // Lowered threshold from 20 to 5 to fix trackpad locking
+    if (Math.abs(e.deltaY) > 5) handleScroll(e.deltaY); 
   }, { passive: false });
 
-  // Touch support
   let _touchY = 0;
+  let _touchX = 0;
   window.addEventListener('touchstart', (e) => {
     _touchY = e.touches[0].clientY;
+    _touchX = e.touches[0].clientX;
   }, { passive: true });
 
   window.addEventListener('touchmove', (e) => {
-    const delta = _touchY - e.touches[0].clientY;
-    if (delta > 40) {
-      _touchY = e.touches[0].clientY;
-      if (!heroUnlocked) {
-        e.preventDefault();
-        revealNext();
-      } else {
-        document.body.classList.remove('scroll-locked');
-      }
+    e.preventDefault();
+    const deltaY = _touchY - e.touches[0].clientY;
+    const deltaX = _touchX - e.touches[0].clientX;
+    
+    // Support both vertical and horizontal swiping on mobile
+    if (Math.abs(deltaY) > Math.abs(deltaX)) {
+      if (Math.abs(deltaY) > 30) handleScroll(deltaY);
+    } else {
+      if (Math.abs(deltaX) > 30) handleScroll(deltaX);
     }
   }, { passive: false });
 
-  // Keyboard support
   window.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown' || e.key === ' ') {
-      e.preventDefault();
-      if (!heroUnlocked) {
-        revealNext();
-      } else {
-        unlockScroll();
-      }
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === ' ') {
+      e.preventDefault(); handleScroll(1);
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault(); handleScroll(-1);
     }
   });
-
-  // ── End Hero Scrollytelling ──────────────────────
 
   </script>
 </body>

@@ -52,15 +52,18 @@ agents/
   ucs.py
 frontend/
   index.html
+  snake_loop.mp4
 game/
   __init__.py
   snake_sensors.py
   snake.py
   state.py
 model/
+  metadata_astar.json
   metadata_ucs.json
 .gitignore
 agents.md
+git
 main.py
 README.md
 requirements.txt
@@ -379,139 +382,6 @@ def solve(snake, food, grid_size):
     }
 </file>
 
-<file path="agents/hybrid_agent.py">
-from agents.rl_agent import Agent
-
-import agents.bfs as bfs
-import agents.dfs as dfs
-import agents.ucs as ucs
-import agents.astar as astar
-import agents.best_first as best_first
-import agents.minimax as minimax
-
-class HybridAgent:
-    def __init__(self, algo_name):
-        self.algo_name = algo_name
-        self.rl = Agent()
-        
-        self.rl.save = self._custom_save
-        self.rl.load = self._custom_load
-        self.rl.load()
-        
-        self.solvers = {
-            "bfs": bfs.solve,
-            "dfs": dfs.solve,
-            "ucs": ucs.solve,
-            "astar": astar.solve,
-            "bestfirst": best_first.solve,
-            "minimax": minimax.solve
-        }
-        
-    def _custom_save(self):
-        import os, json, datetime, torch
-        folder_path = './model'
-        os.makedirs(folder_path, exist_ok=True)
-        file_path = os.path.join(folder_path, f'model_{self.algo_name}.pth')
-        torch.save(self.rl.model.state_dict(), file_path)
-        
-        metadata = {
-            "algo": self.algo_name,
-            "record": self.rl.record,
-            "n_games": self.rl.n_games,
-            "mean_score": self.rl.mean_score,
-            "timestamp": datetime.datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S")
-        }
-        json_path = os.path.join(folder_path, f'metadata_{self.algo_name}.json')
-        with open(json_path, 'w') as f:
-            json.dump(metadata, f)
-            
-    def _custom_load(self):
-        import os, json, torch
-        folder_path = './model'
-        pth_path = os.path.join(folder_path, f'model_{self.algo_name}.pth')
-        json_path = os.path.join(folder_path, f'metadata_{self.algo_name}.json')
-        
-        if os.path.exists(pth_path):
-            self.rl.model.load_state_dict(torch.load(pth_path, weights_only=True))
-            self.rl.model.train()
-            
-        if os.path.exists(json_path):
-            try:
-                with open(json_path, 'r') as f:
-                    meta = json.load(f)
-                self.rl.record = meta.get("record", 0)
-                # n_games persists so epsilon keeps decaying
-                self.rl.n_games = meta.get("n_games", 0)
-                self.rl.mean_score = meta.get("mean_score", 0.0)
-                self.rl.total_score = int(
-                    self.rl.mean_score * self.rl.n_games)
-            except Exception:
-                pass
-
-    def get_action(self, game, state):
-        # Pure DQN mode — no solver
-        if self.algo_name == "dqn" or self.algo_name not in self.solvers:
-            dqn_action = self.rl.get_action(state)
-            return dqn_action, [], [], self.rl.algo_stat
-
-        # Hybrid mode — algorithm LEADS, DQN trains in background
-        snake_coords = [tuple(p) for p in game.snake]
-        food_coord = tuple(game.food)
-
-        solver_res = self.solvers[self.algo_name](
-            snake_coords, food_coord, game.GRID_SIZE
-        )
-
-        algo_action = solver_res.get('action', [1, 0, 0])
-        path = solver_res.get('path', [])
-
-        # DQN still gets action for training purposes
-        # (so it learns from every step even when algo leads)
-        dqn_action = self.rl.get_action(state)
-
-        if len(path) > 0 or self.algo_name == "minimax":
-            # Algorithm found a path — follow it
-            # DQN trained on same experience anyway
-            final_action = algo_action
-        else:
-            # Algorithm found no path (dead end) — DQN takes over
-            final_action = dqn_action
-
-        return (
-            final_action,
-            solver_res.get('explored', []),
-            path,
-            solver_res.get('algo_stat', self.rl.algo_stat)
-        )
-    
-    @property
-    def n_games(self): return self.rl.n_games
-    @n_games.setter
-    def n_games(self, v): self.rl.n_games = v
-    @property
-    def record(self): return self.rl.record
-    @record.setter
-    def record(self, v): self.rl.record = v
-    @property
-    def mean_score(self): return self.rl.mean_score
-    @mean_score.setter
-    def mean_score(self, v): self.rl.mean_score = v
-    @property
-    def epsilon(self): return self.rl.epsilon
-    @property
-    def algo_stat(self): return self.rl.algo_stat
-    @property
-    def total_score(self): return self.rl.total_score
-    @total_score.setter
-    def total_score(self, v): self.rl.total_score = v
-    
-    def train_short_memory(self, *args): self.rl.train_short_memory(*args)
-    def remember(self, *args): self.rl.remember(*args)
-    def train_long_memory(self): self.rl.train_long_memory()
-    def save(self): self.rl.save()
-</file>
-
 <file path="agents/minimax.py">
 def get_action_from_move(curr_dx, curr_dy, move_dx, move_dy):
     cwd = [(1,0), (0,1), (-1,0), (0,-1)]
@@ -617,174 +487,6 @@ def solve(snake, food, grid_size):
     }
 </file>
 
-<file path="agents/rl_agent.py">
-"""
-DQN Agent — based on patrickloeber/snake-ai-pytorch
-MIT License. Proven to score 10-15 within 50 games.
-"""
-import torch
-import random
-import numpy as np
-import os
-import json
-import datetime
-from collections import deque
-from game.state import build_state
-from game.snake import SnakeGame
-
-MAX_MEMORY = 100_000
-BATCH_SIZE = 1000
-LR = 0.001
-import torch.nn as nn
-import torch.optim as optim
-import torch.nn.functional as F
-
-
-class Linear_QNet(nn.Module):
-    def __init__(self, input_size, hidden_size, output_size):
-        super().__init__()
-        self.linear1 = nn.Linear(input_size, hidden_size)
-        self.linear2 = nn.Linear(hidden_size, output_size)
-
-    def forward(self, x):
-        x = F.relu(self.linear1(x))
-        x = self.linear2(x)
-        return x
-
-
-class QTrainer:
-    def __init__(self, model, lr, gamma):
-        self.lr = lr
-        self.gamma = gamma
-        self.model = model
-        self.optimizer = optim.Adam(model.parameters(), lr=self.lr)
-        self.criterion = nn.MSELoss()
-
-    def train_step(self, state, action, reward, next_state, done):
-        state = torch.tensor(np.array(state), dtype=torch.float)
-        next_state = torch.tensor(np.array(next_state), dtype=torch.float)
-        action = torch.tensor(np.array(action), dtype=torch.long)
-        reward = torch.tensor(np.array(reward), dtype=torch.float)
-
-        if len(state.shape) == 1:
-            state = torch.unsqueeze(state, 0)
-            next_state = torch.unsqueeze(next_state, 0)
-            action = torch.unsqueeze(action, 0)
-            reward = torch.unsqueeze(reward, 0)
-            done = (done,)
-
-        pred = self.model(state)
-        target = pred.clone()
-
-        for idx in range(len(done)):
-            Q_new = reward[idx]
-            if not done[idx]:
-                Q_new = reward[idx] + self.gamma * torch.max(
-                    self.model(next_state[idx]))
-            target[idx][torch.argmax(action[idx]).item()] = Q_new
-
-        self.optimizer.zero_grad()
-        loss = self.criterion(target, pred)
-        loss.backward()
-        self.optimizer.step()
-
-
-class Agent:
-    def __init__(self):
-        self.n_games = 0
-        self.epsilon = 0
-        self.gamma = 0.9
-        self.memory = deque(maxlen=MAX_MEMORY)
-        # EXACT patrickloeber architecture: 11→256→3 (2 layers)
-        self.model = Linear_QNet(28, 256, 3)
-        self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
-
-        self.record = 0
-        self.total_score = 0
-        self.mean_score = 0.0
-        self.algo_stat = {"label": "epsilon", "value": 0}
-
-        self.load()
-
-    def remember(self, state, action, reward, next_state, done):
-        self.memory.append((state, action, reward, next_state, done))
-
-    def train_long_memory(self):
-        if len(self.memory) > BATCH_SIZE:
-            mini_sample = random.sample(self.memory, BATCH_SIZE)
-        else:
-            mini_sample = list(self.memory)
-        states, actions, rewards, next_states, dones = zip(*mini_sample)
-        self.trainer.train_step(states, actions, rewards,
-                                next_states, dones)
-
-    def train_short_memory(self, state, action, reward,
-                           next_state, done):
-        self.trainer.train_step(state, action, reward,
-                                next_state, done)
-
-    def get_action(self, state):
-        # EXACT patrickloeber epsilon:
-        # epsilon = 80 - n_games
-        # explore if randint(0,200) < epsilon
-        self.epsilon = 80 - self.n_games
-        final_move = [0, 0, 0]
-        if random.randint(0, 200) < self.epsilon:
-            move = random.randint(0, 2)
-            final_move[move] = 1
-        else:
-            state0 = torch.tensor(state, dtype=torch.float)
-            prediction = self.model(state0)
-            move = torch.argmax(prediction).item()
-            final_move[move] = 1
-        # update display stat (show as 0-1 ratio)
-        display_eps = max(0, self.epsilon) / 200
-        self.algo_stat["value"] = round(display_eps, 3)
-        return final_move
-
-    def save(self, algo_name="dqn"):
-        folder_path = './model'
-        os.makedirs(folder_path, exist_ok=True)
-        torch.save(self.model.state_dict(),
-                   os.path.join(folder_path,
-                                f'model_{algo_name}.pth'))
-        metadata = {
-            "algo": algo_name,
-            "record": self.record,
-            "n_games": self.n_games,
-            "mean_score": self.mean_score,
-            "timestamp": datetime.datetime.now().strftime(
-                "%Y-%m-%d %H:%M:%S")
-        }
-        with open(os.path.join(folder_path,
-                               f'metadata_{algo_name}.json'),
-                  'w') as f:
-            json.dump(metadata, f)
-
-    def load(self, algo_name="dqn"):
-        folder_path = './model'
-        pth = os.path.join(folder_path, f'model_{algo_name}.pth')
-        meta = os.path.join(folder_path,
-                            f'metadata_{algo_name}.json')
-        if os.path.exists(pth):
-            self.model.load_state_dict(
-                torch.load(pth, weights_only=True))
-            self.model.train()
-        if os.path.exists(meta):
-            try:
-                with open(meta) as f:
-                    d = json.load(f)
-                self.record = d.get("record", 0)
-                # n_games PERSISTS across sessions
-                # so epsilon keeps decaying
-                self.n_games = d.get("n_games", 0)
-                self.mean_score = d.get("mean_score", 0.0)
-                self.total_score = int(
-                    self.mean_score * self.n_games)
-            except Exception:
-                pass
-</file>
-
 <file path="agents/ucs.py">
 import heapq
 
@@ -855,1225 +557,8 @@ def solve(snake, food, grid_size):
     }
 </file>
 
-<file path="frontend/index.html">
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <title>AI Snake Arena</title>
-  <style>
-    :root {
-      /* Accent Color Map */
-      --color-dqn: #7c6ef7;
-      --color-bfs: #3b9eff;
-      --color-dfs: #ff7043;
-      --color-ucs: #26c6a0;
-      --color-astar: #ffd740;
-      --color-bestfirst: #e040fb;
-      --color-minimax: #ff4081;
-
-      /* UI Theme */
-      --bg-color: #0a0a0c;
-      --grid-line: #111118;
-      --text-main: #ffffff;
-      --text-muted: #888899;
-      --panel-bg: rgba(255, 255, 255, 0.03);
-      --panel-border: rgba(255, 255, 255, 0.08);
-      --font-family: 'Inter', system-ui, sans-serif;
-    }
-    
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-
-    body {
-      background-color: var(--bg-color);
-      color: var(--text-main);
-      font-family: var(--font-family);
-      overflow-x: hidden;
-    }
-
-    h1 { font-size: 4rem; font-weight: 800; letter-spacing: -0.05em; margin-bottom: 1rem; text-shadow: 0 4px 12px rgba(0,0,0,0.5); }
-    h2 { font-size: 2.5rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 0.5rem; }
-    p { color: var(--text-muted); line-height: 1.6; }
-
-    /* --- Hero Section --- */
-    #hero {
-      position: relative;
-      height: 100vh;
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
-      overflow: hidden;
-    }
-
-    #hero-canvas {
-      position: absolute;
-      top: 0; left: 0;
-      width: 100%; height: 100%;
-      z-index: 0; opacity: 0.4;
-    }
-
-    .hero-content {
-      position: relative;
-      z-index: 1;
-      max-width: 800px;
-      padding: 3rem;
-      background: rgba(10, 10, 12, 0.65);
-      border-radius: 20px;
-      backdrop-filter: blur(12px);
-      box-shadow: 0 16px 40px rgba(0,0,0,0.5);
-      border: 1px solid var(--panel-border);
-    }
-
-    .subtitle { font-size: 1.25rem; margin-bottom: 2rem; }
-    
-    .tech-chips {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 0.75rem;
-      justify-content: center;
-      margin-bottom: 3rem;
-    }
-
-    .chip {
-      background: var(--panel-bg);
-      border: 1px solid var(--panel-border);
-      padding: 0.5rem 1rem;
-      border-radius: 999px;
-      font-size: 0.875rem;
-      font-weight: 500;
-      color: #e2e2ec;
-      transition: all 0.3s ease;
-    }
-    .chip:hover { background: rgba(255, 255, 255, 0.1); transform: translateY(-2px); }
-
-    .scroll-cta {
-      position: absolute;
-      bottom: 2rem;
-      left: 50%;
-      transform: translateX(-50%);
-      z-index: 1;
-      animation: bounce 2s infinite;
-      cursor: pointer;
-      opacity: 0.7;
-      transition: opacity 0.3s;
-    }
-    .scroll-cta:hover { opacity: 1; }
-
-    @keyframes bounce {
-      0%, 20%, 50%, 80%, 100% { transform: translate(-50%, 0); }
-      40% { transform: translate(-50%, -15px); }
-      60% { transform: translate(-50%, -7px); }
-    }
-
-    /* --- Nav Strip --- */
-    #nav-strip {
-      position: sticky;
-      top: 0;
-      z-index: 100;
-      background: rgba(10, 10, 12, 0.9);
-      backdrop-filter: blur(12px);
-      border-bottom: 1px solid var(--panel-border);
-      padding: 1rem;
-      display: flex;
-      justify-content: center;
-      gap: 1rem;
-      flex-wrap: wrap;
-    }
-
-    .nav-pill {
-      background: transparent;
-      color: var(--text-muted);
-      border: 1px solid var(--panel-border);
-      padding: 0.6rem 1.2rem;
-      border-radius: 999px;
-      font-size: 0.9rem;
-      font-weight: 600;
-      cursor: pointer;
-      transition: all 0.2s;
-    }
-    .nav-pill:hover, .nav-pill.active {
-      color: var(--text-main);
-      border-color: var(--pill-color, white);
-      box-shadow: 0 0 15px rgba(255,255,255,0.05);
-    }
-    .nav-pill[data-algo="dqn"] { --pill-color: var(--color-dqn); }
-    .nav-pill[data-algo="bfs"] { --pill-color: var(--color-bfs); }
-    .nav-pill[data-algo="dfs"] { --pill-color: var(--color-dfs); }
-    .nav-pill[data-algo="ucs"] { --pill-color: var(--color-ucs); }
-    .nav-pill[data-algo="astar"] { --pill-color: var(--color-astar); }
-    .nav-pill[data-algo="bestfirst"] { --pill-color: var(--color-bestfirst); }
-    .nav-pill[data-algo="minimax"] { --pill-color: var(--color-minimax); }
-    .nav-pill.active { background: rgba(255,255,255,0.08); }
-
-    /* --- Algo Section --- */
-    .algo-section {
-      padding: 6rem 2rem;
-      border-bottom: 1px solid var(--panel-border);
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .section-header {
-      width: 100%;
-      max-width: 1200px;
-      margin-bottom: 2rem;
-      display: flex;
-      align-items: flex-start;
-      gap: 1rem;
-    }
-
-    .algo-dot {
-      width: 20px; height: 20px;
-      border-radius: 50%;
-      background-color: var(--section-accent);
-      box-shadow: 0 0 12px var(--section-accent);
-      margin-top: 10px;
-    }
-
-    .algo-badge {
-      font-size: 0.75rem;
-      font-weight: 700;
-      padding: 0.25rem 0.75rem;
-      border-radius: 4px;
-      background: rgba(255,255,255,0.1);
-      color: var(--section-accent);
-      border: 1px solid var(--section-accent);
-      text-transform: uppercase;
-      letter-spacing: 1px;
-      vertical-align: middle;
-      margin-left: 0.5rem;
-    }
-
-    .section-title-wrap { flex-grow: 1; }
-
-    .split-layout {
-      display: flex;
-      width: 100%;
-      max-width: 1200px;
-      gap: 2rem;
-    }
-    @media (max-width: 900px) { .split-layout { flex-direction: column; } }
-
-    .panel {
-      flex: 1;
-      background: var(--panel-bg);
-      border: 1px solid var(--panel-border);
-      border-radius: 16px;
-      padding: 1.5rem;
-      display: flex;
-      flex-direction: column;
-    }
-
-    .panel-header {
-      font-size: 1.1rem;
-      font-weight: 600;
-      color: var(--text-muted);
-      margin-bottom: 1rem;
-    }
-
-    .chart-container { flex-grow: 1; position: relative; min-height: 300px; }
-
-    .game-container {
-      display: flex;
-      flex-direction: column;
-      align-items: center;
-    }
-
-    .game-canvas {
-      background: #0a0a0c;
-      border: 1px solid var(--grid-line);
-      border-radius: 8px;
-      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
-      image-rendering: pixelated; /* Crisp grid lines */
-    }
-
-    .controls {
-      display: flex;
-      gap: 1rem;
-      margin-top: 1.5rem;
-      width: 100%;
-      max-width: 400px;
-    }
-
-    .btn {
-      padding: 0.75rem 1.5rem;
-      border: none;
-      border-radius: 8px;
-      font-size: 1rem;
-      font-weight: 600;
-      cursor: pointer;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      gap: 0.5rem;
-      transition: all 0.2s;
-    }
-
-    .btn-play { background: var(--section-accent); color: #000; flex-grow: 1; }
-    .btn-play:hover { filter: brightness(1.2); }
-    .btn-play:disabled { opacity: 0.5; filter: grayscale(1); cursor: not-allowed; }
-
-    .btn-stop { background: rgba(255, 68, 68, 0.15); color: #ff4444; border: 1px solid currentColor; }
-    .btn-stop:hover { background: rgba(255, 68, 68, 0.25); }
-    .btn-stop:disabled { opacity: 0.5; cursor: not-allowed; border-color: transparent; }
-
-    .speed-select {
-      background: rgba(255, 255, 255, 0.05);
-      color: white;
-      border: 1px solid var(--panel-border);
-      border-radius: 8px;
-      padding: 0.5rem;
-      font-family: inherit;
-      font-weight: 600;
-      cursor: pointer;
-    }
-    .speed-select option { background: #1a1a1f; }
-
-    .stat-cards {
-      display: grid;
-      grid-template-columns: repeat(4, 1fr);
-      gap: 1rem;
-      margin-top: 1.5rem;
-      width: 100%;
-    }
-
-    .stat-card {
-      background: rgba(0, 0, 0, 0.2);
-      border: 1px solid var(--panel-border);
-      border-radius: 12px;
-      padding: 1rem;
-      text-align: center;
-      display: flex;
-      flex-direction: column;
-      justify-content: center;
-    }
-
-    .stat-label {
-      font-size: 0.7rem;
-      color: var(--text-muted);
-      text-transform: uppercase;
-      letter-spacing: 0.5px;
-      margin-bottom: 0.5rem;
-    }
-
-    .stat-value {
-      font-size: 1.5rem;
-      font-weight: 700;
-      font-variant-numeric: tabular-nums;
-    }
-    .stat-value.accent { color: var(--section-accent); }
-
-    /* Each section defines --section-accent locally */
-    #sec-dqn { --section-accent: var(--color-dqn); }
-    #sec-bfs { --section-accent: var(--color-bfs); }
-    #sec-dfs { --section-accent: var(--color-dfs); }
-    #sec-ucs { --section-accent: var(--color-ucs); }
-    #sec-astar { --section-accent: var(--color-astar); }
-    #sec-bestfirst { --section-accent: var(--color-bestfirst); }
-    #sec-minimax { --section-accent: var(--color-minimax); }
-
-  </style>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
-</head>
-<body>
-
-  <!-- Hero Section -->
-  <section id="hero">
-    <canvas id="hero-canvas"></canvas>
-    <div class="hero-content">
-      <h1>AI Snake Arena</h1>
-      <p class="subtitle">Watch Reinforcement Learning & Classical Search Algorithms compete to master the game of Snake.</p>
-      <div class="tech-chips">
-        <span class="chip">PyTorch</span>
-        <span class="chip">DQN</span>
-        <span class="chip">27-Input State</span>
-        <span class="chip">FastAPI</span>
-        <span class="chip">WebSocket</span>
-        <span class="chip">BFS</span>
-        <span class="chip">A* Search</span>
-        <span class="chip">Minimax</span>
-      </div>
-    </div>
-    <div class="scroll-cta" onclick="document.getElementById('sec-dqn').scrollIntoView({behavior:'smooth'})">
-      <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-        <path d="M12 5v14M19 12l-7 7-7-7"/>
-      </svg>
-    </div>
-  </section>
-
-  <!-- Nav Strip -->
-  <nav id="nav-strip">
-    <button class="nav-pill active" data-algo="dqn" onclick="document.getElementById('sec-dqn').scrollIntoView({behavior:'smooth'})">Pure DQN</button>
-    <button class="nav-pill" data-algo="bfs" onclick="document.getElementById('sec-bfs').scrollIntoView({behavior:'smooth'})">DQN + BFS</button>
-    <button class="nav-pill" data-algo="dfs" onclick="document.getElementById('sec-dfs').scrollIntoView({behavior:'smooth'})">DQN + DFS</button>
-    <button class="nav-pill" data-algo="ucs" onclick="document.getElementById('sec-ucs').scrollIntoView({behavior:'smooth'})">DQN + UCS</button>
-    <button class="nav-pill" data-algo="astar" onclick="document.getElementById('sec-astar').scrollIntoView({behavior:'smooth'})">DQN + A*</button>
-    <button class="nav-pill" data-algo="bestfirst" onclick="document.getElementById('sec-bestfirst').scrollIntoView({behavior:'smooth'})">DQN + Best-First</button>
-    <button class="nav-pill" data-algo="minimax" onclick="document.getElementById('sec-minimax').scrollIntoView({behavior:'smooth'})">DQN + Minimax</button>
-  </nav>
-
-  <!-- Main Container -->
-  <main id="sections-container"></main>
-
-  <script>
-    // --- Configuration ---
-    const ALGOS = [
-      { id: 'dqn', name: 'Pure DQN', badge: 'Deep Q-Network', statLabel: 'epsilon', desc: 'A neural network learning strictly via random exploration and delayed rewards. Fails often early on.' },
-      { id: 'bfs', name: 'DQN + BFS', badge: 'Breadth-First Search', statLabel: 'nodes', desc: 'DQN guided by an optimal unweighted shortest-path solver. Explores in all directions equally.' },
-      { id: 'dfs', name: 'DQN + DFS', badge: 'Depth-First Search', statLabel: 'nodes', desc: 'DQN guided by an aggressive solver diving deep before backtracking. Often finds sub-optimal twisted paths.' },
-      { id: 'ucs', name: 'DQN + UCS', badge: 'Uniform Cost Search', statLabel: 'cost', desc: 'DQN guided by Dijkstra\'s algorithm equivalent on uniform grid.' },
-      { id: 'astar', name: 'DQN + A*', badge: 'A* Search', statLabel: 'path', desc: 'DQN guided by A* using Manhattan distance heuristic. Extremely efficient and optimal.' },
-      { id: 'bestfirst', name: 'DQN + Best-First', badge: 'Greedy Best-First', statLabel: 'h', desc: 'DQN guided purely by Manhattan distance to food. Can get trapped in concave shapes.' },
-      { id: 'minimax', name: 'DQN + Minimax', badge: 'Alpha-Beta Pruning', statLabel: 'depth', desc: 'DQN guided by adversarial search treating the board as a game against a phantom blocker.' }
-    ];
-
-    const ACCENTS = {
-      'dqn': '#7c6ef7',
-      'bfs': '#3b9eff',
-      'dfs': '#ff7043',
-      'ucs': '#26c6a0',
-      'astar': '#ffd740',
-      'bestfirst': '#e040fb',
-      'minimax': '#ff4081'
-    };
-
-    const GRID_SIZE = 16;
-    const CANVAS_PX = 400; // 16 * 25
-    const CELL_PX = CANVAS_PX / GRID_SIZE;
-
-    // --- Generate Sections ---
-    const container = document.getElementById('sections-container');
-    
-    ALGOS.forEach(algo => {
-      const section = document.createElement('section');
-      section.id = `sec-${algo.id}`;
-      section.className = 'algo-section';
-      section.dataset.algo = algo.id;
-      
-      section.innerHTML = `
-        <div class="section-header">
-          <div class="algo-dot"></div>
-          <div class="section-title-wrap">
-            <h2>${algo.name} <span class="algo-badge">${algo.badge}</span></h2>
-            <p>${algo.desc}</p>
-          </div>
-        </div>
-        <div class="split-layout">
-          <div class="panel">
-            <div class="panel-header">Performance History</div>
-            <div class="chart-container">
-              <canvas id="chart-${algo.id}"></canvas>
-            </div>
-          </div>
-          <div class="panel">
-            <div class="panel-header">Live Simulation</div>
-            <div class="game-container">
-              <canvas id="canvas-${algo.id}" width="${CANVAS_PX}" height="${CANVAS_PX}" class="game-canvas"></canvas>
-            </div>
-            <div class="controls">
-              <button class="btn btn-play" id="play-${algo.id}" onclick="window.startAlgo('${algo.id}')">
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Play
-              </button>
-              <button class="btn btn-stop" id="stop-${algo.id}" onclick="window.stopAlgo('${algo.id}')" disabled>
-                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg> Stop
-              </button>
-              <select class="speed-select" id="speed-${algo.id}" onchange="window.setSpeed('${algo.id}', this.value)">
-                <option value="1">1x Speed</option>
-                <option value="2">2x Speed</option>
-                <option value="10" selected>10x Speed</option>
-                <option value="50">50x Speed</option>
-              </select>
-            </div>
-            <div class="stat-cards">
-              <div class="stat-card">
-                <div class="stat-label">Game No</div>
-                <div class="stat-value" id="stat-game-${algo.id}">0</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">Score</div>
-                <div class="stat-value" id="stat-score-${algo.id}">0</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">Record</div>
-                <div class="stat-value" id="stat-record-${algo.id}">0</div>
-              </div>
-              <div class="stat-card">
-                <div class="stat-label">${algo.statLabel}</div>
-                <div class="stat-value accent" id="stat-algostat-${algo.id}">0</div>
-              </div>
-            </div>
-          </div>
-        </div>
-      `;
-      container.appendChild(section);
-    });
-
-    // --- Canvas Renderer ---
-    function hexToRgba(hex, alpha) {
-        const r = parseInt(hex.slice(1, 3), 16);
-        const g = parseInt(hex.slice(3, 5), 16);
-        const b = parseInt(hex.slice(5, 7), 16);
-        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
-    }
-
-    function renderFrame(ctx, frameData, accentColor) {
-        // 1. Fill background #0a0a0c
-        ctx.fillStyle = '#0a0a0c';
-        ctx.fillRect(0, 0, CANVAS_PX, CANVAS_PX);
-        
-        // 2. Draw grid lines (0.5px, #111118)
-        ctx.strokeStyle = '#111118';
-        ctx.lineWidth = 0.5;
-        for (let i = 0; i <= GRID_SIZE; i++) {
-            const pos = i * CELL_PX;
-            ctx.beginPath(); ctx.moveTo(pos, 0); ctx.lineTo(pos, CANVAS_PX); ctx.stroke();
-            ctx.beginPath(); ctx.moveTo(0, pos); ctx.lineTo(CANVAS_PX, pos); ctx.stroke();
-        }
-
-        const drawCell = (x, y, color) => {
-            if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return; // boundary safeguard
-            ctx.fillStyle = color;
-            ctx.fillRect(x * CELL_PX + 1, y * CELL_PX + 1, CELL_PX - 2, CELL_PX - 2);
-        };
-
-        // 3. Draw explored cells (accent color at 12% opacity)
-        if (frameData.explored && frameData.explored.length > 0) {
-            const clr = hexToRgba(accentColor, 0.12);
-            frameData.explored.forEach(([x, y]) => drawCell(x, y, clr));
-        }
-
-        // 4. Draw path cells (accent color at 25% opacity)
-        if (frameData.path && frameData.path.length > 0) {
-            const clr = hexToRgba(accentColor, 0.25);
-            frameData.path.forEach(([x, y]) => drawCell(x, y, clr));
-        }
-
-        // 5. & 6. Draw snake
-        if (frameData.snake && frameData.snake.length > 0) {
-            const len = frameData.snake.length;
-            frameData.snake.forEach(([x, y], i) => {
-                if (i === 0) {
-                    // Head: full accent + 2 white eye dots
-                    drawCell(x, y, accentColor);
-                    
-                    // compute eye positions based on body direction
-                    const cx = x * CELL_PX + CELL_PX/2;
-                    const cy = y * CELL_PX + CELL_PX/2;
-                    ctx.fillStyle = 'white';
-                    ctx.beginPath(); ctx.arc(cx - 3, cy - 3, 2, 0, Math.PI * 2); ctx.fill();
-                    ctx.beginPath(); ctx.arc(cx + 3, cy - 3, 2, 0, Math.PI * 2); ctx.fill();
-                } else {
-                    // Body: accent color at decreasing opacity (1.0 -> 0.4)
-                    const op = 1.0 - (0.6 * (Number(i) / (len - 1 || 1)));
-                    drawCell(x, y, hexToRgba(accentColor, op));
-                }
-            });
-        }
-
-        // 7. Draw food: red circle (#ff4444) with small highlight dot
-        if (frameData.food) {
-            const [x, y] = frameData.food;
-            const cx = x * CELL_PX + CELL_PX / 2;
-            const cy = y * CELL_PX + CELL_PX / 2;
-            ctx.fillStyle = '#ff4444';
-            ctx.beginPath(); ctx.arc(cx, cy, CELL_PX / 2 - 2, 0, Math.PI * 2); ctx.fill();
-            
-            ctx.fillStyle = 'white';
-            ctx.beginPath(); ctx.arc(cx - 3, cy - 3, 2, 0, Math.PI * 2); ctx.fill();
-        }
-    }
-
-    // --- Chart & WebSocket Managers ---
-    const charts = {};
-    const wsConnections = {};
-
-    function initChart(algoId, accentColor) {
-        const ctx = document.getElementById(`chart-${algoId}`).getContext('2d');
-        charts[algoId] = new Chart(ctx, {
-            type: 'line',
-            data: {
-                labels: [],
-                datasets: [
-                    {
-                        label: 'Score',
-                        data: [],
-                        borderColor: accentColor,
-                        backgroundColor: hexToRgba(accentColor, 0.1),
-                        borderWidth: 2,
-                        fill: true,
-                        tension: 0.2, // smoother line
-                        pointRadius: 0
-                    },
-                    {
-                        label: 'Mean Score',
-                        data: [],
-                        borderColor: hexToRgba(accentColor, 0.6),
-                        borderWidth: 2,
-                        borderDash: [5, 5],
-                        fill: false,
-                        tension: 0.2,
-                        pointRadius: 0
-                    }
-                ]
-            },
-            options: {
-                responsive: true,
-                maintainAspectRatio: false,
-                animation: false,
-                scales: {
-                    x: {
-                        title: { display: true, text: 'Games', color: '#888899' },
-                        grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: { color: '#888899', maxTicksLimit: 10 }
-                    },
-                    y: {
-                        beginAtZero: true,
-                        title: { display: true, text: 'Score', color: '#888899' },
-                        grid: { color: 'rgba(255,255,255,0.05)' },
-                        ticks: { color: '#888899' },
-                        suggestedMax: 50 // initial scale up to sensible number
-                    }
-                },
-                plugins: { legend: { labels: { color: '#e2e2ec' } } }
-            }
-        });
-    }
-
-    class WSManager {
-        constructor(algoId) {
-            this.algoId = algoId;
-            this.ws = null;
-            this.accentColor = ACCENTS[algoId];
-            this.canvasCtx = document.getElementById(`canvas-${algoId}`).getContext('2d');
-            this.chart = charts[algoId];
-            this.gameDataBuffer = [];
-        }
-
-        connect(speed) {
-            const url = `ws://${window.location.host}/ws/${this.algoId}`;
-            this.ws = new WebSocket(url);
-
-            this.ws.onopen = () => {
-                const msg = { type: "start", algo: this.algoId, speed: parseInt(speed) };
-                this.ws.send(JSON.stringify(msg));
-                this.updateUI(true);
-            };
-
-            this.ws.onmessage = (e) => {
-                const data = JSON.parse(e.data);
-                if (data.type === 'step') {
-                    // 1. Draw frame
-                    renderFrame(this.canvasCtx, data, this.accentColor);
-                    
-                    // 2. Update stats
-                    document.getElementById(`stat-game-${this.algoId}`).textContent = data.game_no;
-                    document.getElementById(`stat-score-${this.algoId}`).textContent = data.score;
-                    document.getElementById(`stat-record-${this.algoId}`).textContent = data.record;
-                    if(data.algo_stat) {
-                        let v = data.algo_stat.value;
-                        if (typeof v === 'number' && !Number.isInteger(v)) v = v.toFixed(2);
-                        document.getElementById(`stat-algostat-${this.algoId}`).textContent = v;
-                    }
-
-                    // 3. Update chart if game done
-                    if (data.done) {
-                        const scoreData = this.chart.data.datasets[0].data;
-                        const meanData = this.chart.data.datasets[1].data;
-                        const labels = this.chart.data.labels;
-
-                        labels.push(data.game_no);
-                        scoreData.push(data.score);
-                        meanData.push(data.mean_score);
-
-                        // keep last 150 points for performance
-                        if (labels.length > 150) {
-                            labels.shift(); scoreData.shift(); meanData.shift();
-                        }
-                        this.chart.update();
-                    }
-                }
-            };
-
-            this.ws.onclose = () => { this.updateUI(false); this.ws = null; };
-            this.ws.onerror = (err) => console.error(`[${this.algoId}] WS Error:`, err);
-        }
-
-        disconnect() {
-            if (this.ws) {
-                this.ws.send(JSON.stringify({ type: "stop" }));
-                this.ws.close();
-            }
-        }
-
-        setSpeed(newSpeed) {
-            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                this.ws.send(JSON.stringify({ type: "set_speed", speed: parseInt(newSpeed) }));
-            }
-        }
-
-        updateUI(isPlaying) {
-            document.getElementById(`play-${this.algoId}`).disabled = isPlaying;
-            document.getElementById(`stop-${this.algoId}`).disabled = !isPlaying;
-        }
-    }
-
-    // Attach to window so buttons can trigger them
-    window.startAlgo = (algoId) => {
-        if (!wsConnections[algoId]) wsConnections[algoId] = new WSManager(algoId);
-        const speed = document.getElementById(`speed-${algoId}`).value;
-        wsConnections[algoId].connect(speed);
-    };
-
-    window.stopAlgo = (algoId) => {
-        if (wsConnections[algoId]) wsConnections[algoId].disconnect();
-    };
-
-    window.setSpeed = (algoId, speed) => {
-        if (wsConnections[algoId]) wsConnections[algoId].setSpeed(speed);
-    };
-
-    // --- Init: Render blank boards, setup observers ---
-    ALGOS.forEach(algo => {
-        initChart(algo.id, ACCENTS[algo.id]);
-        const ctx = document.getElementById(`canvas-${algo.id}`).getContext('2d');
-        renderFrame(ctx, {}, ACCENTS[algo.id]);
-    });
-
-    // Sub-Task M3-03: IntersectionObserver for Sticky Nav highlighting
-    const navPills = document.querySelectorAll('.nav-pill');
-    const sections = document.querySelectorAll('.algo-section');
-    const observer = new IntersectionObserver((entries) => {
-      let isAnyIntersecting = false;
-      entries.forEach(entry => {
-        if (entry.isIntersecting) {
-            navPills.forEach(p => p.classList.remove('active'));
-            const activePill = document.querySelector(`.nav-pill[data-algo="${entry.target.dataset.algo}"]`);
-            if (activePill) activePill.classList.add('active');
-            isAnyIntersecting = true;
-        }
-      });
-      // Fallback: If at very top, highlight pure-dqn.
-      if (!isAnyIntersecting && window.scrollY < 200) {
-          navPills.forEach(p => p.classList.remove('active'));
-          document.querySelector('.nav-pill[data-algo="dqn"]').classList.add('active');
-      }
-    }, { threshold: 0.5, rootMargin: '-10% 0px -40% 0px' });
-    sections.forEach(sec => observer.observe(sec));
-
-
-    // --- Sub-Task M3-02: Hero Canvas Animation (Procedural Crawling Snake) ---
-    const heroCanvas = document.getElementById('hero-canvas');
-    const hctx = heroCanvas.getContext('2d');
-    
-    function resizeHero() {
-      heroCanvas.width = heroCanvas.clientWidth;
-      heroCanvas.height = heroCanvas.clientHeight;
-    }
-    window.addEventListener('resize', resizeHero);
-    resizeHero();
-
-    const particles = [];
-    const pColors = Object.values(ACCENTS);
-    for(let i=0; i<15; i++) {
-        particles.push({
-            x: Math.random() * innerWidth,
-            y: Math.random() * innerHeight,
-            vx: (Math.random() - 0.5) * 4,
-            vy: (Math.random() - 0.5) * 4,
-            color: pColors[i % pColors.length],
-            history: [] // snake body tail
-        });
-    }
-
-    function drawHero() {
-      hctx.clearRect(0, 0, heroCanvas.width, heroCanvas.height);
-      
-      // Draw grid
-      hctx.strokeStyle = 'rgba(255,255,255,0.015)';
-      hctx.lineWidth = 1;
-      const size = 30;
-      for(let x=0; x<heroCanvas.width; x+=size) {
-        hctx.beginPath(); hctx.moveTo(x,0); hctx.lineTo(x, heroCanvas.height); hctx.stroke();
-      }
-      for(let y=0; y<heroCanvas.height; y+=size) {
-        hctx.beginPath(); hctx.moveTo(0,y); hctx.lineTo(heroCanvas.width, y); hctx.stroke();
-      }
-
-      // Draw snakes
-      particles.forEach(p => {
-         p.history.unshift({x: p.x, y: p.y});
-         if(p.history.length > 20) p.history.pop();
-         
-         // bounce logic
-         if(p.x <= 0 || p.x >= heroCanvas.width) { p.vx *= -1; }
-         if(p.y <= 0 || p.y >= heroCanvas.height) { p.vy *= -1; }
-         // minor wandering
-         p.vx += (Math.random() - 0.5) * 0.2;
-         p.vy += (Math.random() - 0.5) * 0.2;
-         // clamp speed
-         const spd = Math.hypot(p.vx, p.vy);
-         if (spd > 3) { p.vx = (p.vx/spd)*3; p.vy = (p.vy/spd)*3;}
-
-         p.x += p.vx;
-         p.y += p.vy;
-         
-         // draw path line
-         hctx.beginPath();
-         for(let i=0; i<p.history.length; i++) {
-           const pt = p.history[i];
-           if(i===0) hctx.moveTo(pt.x, pt.y);
-           else hctx.lineTo(pt.x, pt.y);
-         }
-         hctx.strokeStyle = p.color;
-         hctx.lineWidth = 4;
-         hctx.lineCap = 'round';
-         hctx.lineJoin = 'round';
-         hctx.globalAlpha = 0.5;
-         hctx.stroke();
-         
-         // draw head
-         hctx.globalAlpha = 1.0;
-         hctx.beginPath();
-         hctx.arc(p.x, p.y, 4, 0, Math.PI*2);
-         hctx.fillStyle = p.color;
-         hctx.fill();
-      });
-      requestAnimationFrame(drawHero);
-    }
-    drawHero();
-
-  </script>
-</body>
-</html>
-</file>
-
 <file path="game/__init__.py">
 
-</file>
-
-<file path="game/snake_sensors.py">
-"""
-SnakeSensors — adapted from SnakeQ by ludius0 (MIT License)
-Provides 8-direction vision rays for wall distance, food detection, body distance.
-"""
-import numpy as np
-
-
-class SnakeSensors:
-    def __init__(self, row, moves):
-        self.row = row
-        self.dis = self.row - 1
-        self.moves = moves
-        self.next_to_head_dir = [(1, 0), (0, 1), (-1, 0), (0, -1)]
-
-    def update_sensor_board(self, board, snake_head):
-        self.board = board
-        self.head_y, self.head_x = snake_head
-        self.dis_y_down = self.dis - self.head_y
-        self.dis_y_up = self.dis - self.dis_y_down
-        self.dis_x_right = self.dis - self.head_x
-        self.dis_x_left = self.dis - self.dis_x_right
-
-    def check_up(self, target):
-        if self.head_y == 0: return 0
-        for i in range(self.head_y - 1, -1, -1):
-            if self.board[i, self.head_x] == target:
-                return i
-        return 0
-
-    def check_down(self, target):
-        if self.head_y == self.dis: return 0
-        for i in range(self.head_y + 1, self.row):
-            if self.board[i, self.head_x] == target:
-                return i
-        return 0
-
-    def check_right(self, target):
-        if self.head_x == self.dis: return 0
-        for i in range(self.head_x + 1, self.row):
-            if self.board[self.head_y, i] == target:
-                return i
-        return 0
-
-    def check_left(self, target):
-        if self.head_x == 0: return 0
-        for i in range(self.head_x - 1, -1, -1):
-            if self.board[self.head_y, i] == target:
-                return i
-        return 0
-
-    def check_right_up(self, target):
-        distance = self.dis_y_up if self.dis_y_up < self.dis_x_right else self.dis_x_right
-        if distance == 0: return 0
-        for n in range(1, distance + 1):
-            if self.board[self.head_y - n, self.head_x + n] == target:
-                return n
-        return 0
-
-    def check_right_down(self, target):
-        distance = self.dis_y_down if self.dis_y_down < self.dis_x_right else self.dis_x_right
-        if distance == 0: return 0
-        for n in range(1, distance + 1):
-            if self.board[self.head_y + n, self.head_x + n] == target:
-                return n
-        return 0
-
-    def check_left_up(self, target):
-        distance = self.dis_y_up if self.dis_y_up < self.dis_x_left else self.dis_x_left
-        if distance == 0: return 0
-        for n in range(1, distance + 1):
-            if self.board[self.head_y - n, self.head_x - n] == target:
-                return n
-        return 0
-
-    def check_left_down(self, target):
-        distance = self.dis_y_down if self.dis_y_down < self.dis_x_left else self.dis_x_left
-        if distance == 0: return 0
-        for n in range(1, distance + 1):
-            if self.board[self.head_y + n, self.head_x - n] == target:
-                return n
-        return 0
-
-    def all_eight_directions(self, target):
-        results = []
-        for val in [
-            self.check_up(target),
-            self.check_right_up(target),
-            self.check_right(target),
-            self.check_right_down(target),
-            self.check_down(target),
-            self.check_left_down(target),
-            self.check_left(target),
-            self.check_left_up(target),
-        ]:
-            results.append(max(0, min(self.row - 1, val)))
-        return np.array(results)
-
-    def distance_to_walls(self):
-        return np.round(
-            np.array([self.dis_y_up, self.dis_x_right, self.dis_y_down, self.dis_x_left]) / self.dis, 1
-        )
-
-    def get_head_direction(self, head_dir):
-        if head_dir is None:
-            return np.array([0, 0, 0, 0])
-        if np.array_equal(head_dir, self.moves["up"]):    return np.array([1, 0, 0, 0])
-        if np.array_equal(head_dir, self.moves["right"]): return np.array([0, 1, 0, 0])
-        if np.array_equal(head_dir, self.moves["down"]):  return np.array([0, 0, 1, 0])
-        if np.array_equal(head_dir, self.moves["left"]):  return np.array([0, 0, 0, 1])
-        return np.array([0, 0, 0, 0])
-
-    def get_tail_direction(self, snake_body):
-        """snake_body: numpy array of shape (N, 2) in (y, x) order"""
-        if len(snake_body) > 1:
-            tail_dir = tuple(
-                (np.array(snake_body[1]) - np.array(snake_body[0])).tolist()
-            )
-            moves = self.moves
-            if np.array_equal(tail_dir, moves["up"]):    return np.array([1, 0, 0, 0])
-            if np.array_equal(tail_dir, moves["right"]): return np.array([0, 1, 0, 0])
-            if np.array_equal(tail_dir, moves["down"]):  return np.array([0, 0, 1, 0])
-            if np.array_equal(tail_dir, moves["left"]):  return np.array([0, 0, 0, 1])
-        return np.array([0, 0, 0, 0])
-</file>
-
-<file path="game/snake.py">
-"""
-Core Python logic for the AI Snake game on a 16x16 grid.
-"""
-
-import enum
-import random
-from collections import namedtuple
-import numpy as np
-
-class Direction(enum.Enum):
-    RIGHT = 1
-    LEFT = 2
-    UP = 3
-    DOWN = 4
-
-Point = namedtuple('Point', 'x, y')
-
-GRID_SIZE = 16
-BLOCK_SIZE = 1
-
-class SnakeGame:
-    def __init__(self):
-        self.GRID_SIZE = GRID_SIZE
-        self.w = GRID_SIZE   # used by state.py for grid_size calculation
-        self.reset()
-        
-    def reset(self):
-        """Reset the game state to start a new game."""
-        self.direction = Direction.RIGHT
-        
-        # Start in the middle
-        self.head = Point(GRID_SIZE // 2, GRID_SIZE // 2)
-        self.snake = [
-            self.head,
-            Point(self.head.x - BLOCK_SIZE, self.head.y),
-            Point(self.head.x - (2 * BLOCK_SIZE), self.head.y)
-        ]
-        
-        self.score = 0
-        self.food = None
-        self.place_food()
-        self.frame_iteration = 0
-        
-    def place_food(self):
-        """Places food in a random unoccupied cell."""
-        empty_spots = []
-        for x in range(GRID_SIZE):
-            for y in range(GRID_SIZE):
-                pt = Point(x, y)
-                if pt not in self.snake:
-                    empty_spots.append(pt)
-        
-        if empty_spots:
-            self.food = random.choice(empty_spots)
-        else:
-            self.food = self.head  # Grid full
-            
-    def play_step(self, action):
-        """
-        Takes an action and plays one game step.
-        action: list or array of 3 ints [straight, right, left]
-        Returns: (reward, game_over, score)
-        Rewards: +10 eat, -10 die, +1 closer to food, -1 farther
-        """
-        self.frame_iteration += 1
-        
-        pass  # no distance tracking needed
-        
-        # 1. move -> update head
-        self._move(action)
-        self.snake.insert(0, self.head)
-        
-        # 2. check game over
-        reward = 0
-        game_over = False
-        
-        # Timeout if we loop too long without eating
-        if self.is_collision() or self.frame_iteration > 100 * len(self.snake):
-            game_over = True
-            reward = -10
-            return reward, game_over, self.score
-            
-        # 3. eat food or remove tail
-        if self.head == self.food:
-            self.score += 1
-            reward = 10
-            self.place_food()
-        else:
-            self.snake.pop()
-            reward = 0
-                
-        return reward, game_over, self.score
-        
-    def is_collision(self, pt=None):
-        """Checks if pt hits boundary or snake body. Defaults to head."""
-        if pt is None:
-            pt = self.head
-            
-        # boundary collision
-        if pt.x < 0 or pt.x >= GRID_SIZE or pt.y < 0 or pt.y >= GRID_SIZE:
-            return True
-            
-        # self collision
-        if pt in self.snake[1:]:
-            return True
-            
-        return False
-        
-    def _move(self, action):
-        """Moves head based on [straight, right_turn, left_turn] array."""
-        # [straight, right, left]
-        clock_wise = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP]
-        idx = clock_wise.index(self.direction)
-        
-        if np.array_equal(action, [1, 0, 0]):
-            new_dir = clock_wise[idx] # no change
-        elif np.array_equal(action, [0, 1, 0]):
-            new_idx = (idx + 1) % 4
-            new_dir = clock_wise[new_idx] # right turn
-        else: # [0, 0, 1]
-            new_idx = (idx - 1) % 4
-            new_dir = clock_wise[new_idx] # left turn
-            
-        self.direction = new_dir
-        
-        x = self.head.x
-        y = self.head.y
-        if self.direction == Direction.RIGHT:
-            x += BLOCK_SIZE
-        elif self.direction == Direction.LEFT:
-            x -= BLOCK_SIZE
-        elif self.direction == Direction.DOWN:
-            y += BLOCK_SIZE
-        elif self.direction == Direction.UP:
-            y -= BLOCK_SIZE
-            
-        self.head = Point(x, y)
-</file>
-
-<file path="game/state.py">
-"""
-State vector builder — 28 inputs (SnakeQ architecture, MIT License)
-[0-3]   wall distances 4 directions      (float 0-1)
-[4-11]  food visible in 8 directions     (bool 0/1)
-[12-19] body distance in 8 directions    (float, normalised)
-[20-23] head direction                   (one-hot 4)
-[24-27] tail direction                   (one-hot 4)
-"""
-import numpy as np
-from game.snake_sensors import SnakeSensors
-
-INPUT_SIZE = 28
-
-MOVES_DIR = {
-    "up":    np.array([-1,  0]),
-    "right": np.array([ 0,  1]),
-    "down":  np.array([ 1,  0]),
-    "left":  np.array([ 0, -1]),
-}
-
-_sensors = None
-
-def _get_sensors(grid_size):
-    global _sensors
-    if _sensors is None:
-        _sensors = SnakeSensors(grid_size, MOVES_DIR)
-    return _sensors
-
-
-def build_state_simple(game) -> np.ndarray:
-    """
-    EXACT patrickloeber/snake-ai-pytorch get_state.
-    11 binary inputs. Proven to score 10-15 in 50 games.
-    Uses game.is_collision() exactly as original.
-    """
-    from game.snake import Point, Direction
-    head = game.snake[0]
-
-    point_l = Point(head.x - 1, head.y)
-    point_r = Point(head.x + 1, head.y)
-    point_u = Point(head.x, head.y - 1)
-    point_d = Point(head.x, head.y + 1)
-
-    dir_l = game.direction == Direction.LEFT
-    dir_r = game.direction == Direction.RIGHT
-    dir_u = game.direction == Direction.UP
-    dir_d = game.direction == Direction.DOWN
-
-    state = [
-        # Danger straight
-        (dir_r and game.is_collision(point_r)) or
-        (dir_l and game.is_collision(point_l)) or
-        (dir_u and game.is_collision(point_u)) or
-        (dir_d and game.is_collision(point_d)),
-
-        # Danger right
-        (dir_u and game.is_collision(point_r)) or
-        (dir_d and game.is_collision(point_l)) or
-        (dir_l and game.is_collision(point_u)) or
-        (dir_r and game.is_collision(point_d)),
-
-        # Danger left
-        (dir_d and game.is_collision(point_r)) or
-        (dir_u and game.is_collision(point_l)) or
-        (dir_r and game.is_collision(point_u)) or
-        (dir_l and game.is_collision(point_d)),
-
-        dir_l, dir_r, dir_u, dir_d,
-
-        game.food.x < head.x,
-        game.food.x > head.x,
-        game.food.y < head.y,
-        game.food.y > head.y,
-    ]
-    return np.array(state, dtype=int).astype(np.float32)
-
-def build_state(game, extended=False) -> np.ndarray:
-    if not extended:
-        return build_state_simple(game)
-
-    """
-    Convert game object into a 28-element float32 numpy array.
-
-    Expects game to have:
-      game.snake   : list of Point(x, y) namedtuples, index 0 = head
-      game.food    : Point(x, y)
-      game.direction: Direction enum (Direction.UP/DOWN/LEFT/RIGHT)
-      game.w, game.h: grid width/height in pixels
-      BLOCK_SIZE   : imported from game.snake
-    """
-    from game.snake import BLOCK_SIZE, Direction
-
-    # Safe assumption for 16x16 grid
-    if hasattr(game, 'w'):
-        grid_size = game.w // BLOCK_SIZE
-    else:
-        grid_size = 16
-
-    sensors = _get_sensors(grid_size)
-
-    board = np.zeros((grid_size, grid_size), dtype=np.float32)
-
-    for pt in game.snake:
-        col = int(pt.x) % grid_size
-        row = int(pt.y) % grid_size
-        col = max(0, min(grid_size - 1, col))
-        row = max(0, min(grid_size - 1, row))
-        board[row, col] = 1.0
-
-    food_col = max(0, min(grid_size - 1, int(game.food.x)))
-    food_row = max(0, min(grid_size - 1, int(game.food.y)))
-    board[food_row, food_col] = 2.0
-
-    head_col = max(0, min(grid_size - 1, int(game.snake[0].x)))
-    head_row = max(0, min(grid_size - 1, int(game.snake[0].y)))
-
-    sensors.update_sensor_board(board, (head_row, head_col))
-
-    # --- Wall distances (4) ---
-    wall_dist = sensors.distance_to_walls()
-
-    # --- Food in 8 directions (8) ---
-    see_food = sensors.all_eight_directions(2.0)
-    see_food = np.where(see_food > 0, 1.0, 0.0)   # convert to bool
-
-    # --- Body distance in 8 directions (8) ---
-    see_body = sensors.all_eight_directions(1.0)
-    see_body = (see_body / (grid_size - 1)) * -1   # normalise + negate like SnakeQ
-
-    # --- Head direction (4) ---
-    dir_map = {
-        Direction.UP:    MOVES_DIR["up"],
-        Direction.DOWN:  MOVES_DIR["down"],
-        Direction.LEFT:  MOVES_DIR["left"],
-        Direction.RIGHT: MOVES_DIR["right"],
-    }
-    head_dir_vec = dir_map.get(game.direction, None)
-    head_dir = sensors.get_head_direction(head_dir_vec)
-
-    # --- Tail direction (4) ---
-    snake_yx = np.array([
-        [int(pt.y // BLOCK_SIZE), int(pt.x // BLOCK_SIZE)]
-        for pt in reversed(game.snake)
-    ])
-    tail_dir = sensors.get_tail_direction(snake_yx)
-
-    state = np.concatenate([wall_dist, see_food, see_body, head_dir, tail_dir])
-    return state.astype(np.float32)
-</file>
-
-<file path="model/metadata_ucs.json">
-{"algo": "ucs", "record": 5, "n_games": 1, "mean_score": 0.0, "timestamp": "2026-03-20 23:19:37"}
 </file>
 
 <file path=".gitignore">
@@ -2271,166 +756,8 @@ Frontend tasks:
 - [ ] Screenshot attached as proof of visual work
 </file>
 
-<file path="main.py">
-import asyncio
-import json
-import os
-import glob
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from fastapi.responses import FileResponse
-from fastapi.middleware.cors import CORSMiddleware
-from typing import Dict
+<file path="git">
 
-from game.snake import SnakeGame
-from game.state import build_state
-from agents.hybrid_agent import HybridAgent
-
-app = FastAPI()
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
-SPEED_FPS = { "1": 5, "2": 10, "10": 50, "50": 200 }
-
-@app.get("/")
-async def get_index():
-    return FileResponse("frontend/index.html")
-
-@app.get("/model/status")
-async def get_model_status():
-    status = []
-    for file in glob.glob("model/metadata_*.json"):
-        with open(file, "r") as f:
-            try:
-                status.append(json.load(f))
-            except json.JSONDecodeError:
-                pass
-    return status
-
-@app.post("/model/reset/{algo}")
-async def reset_model(algo: str):
-    pth = f"model/model_{algo}.pth"
-    json_path = f"model/metadata_{algo}.json"
-    if os.path.exists(pth):
-        os.remove(pth)
-    if os.path.exists(json_path):
-        os.remove(json_path)
-    return {"status": "ok", "algo": algo}
-
-class ConnectionManager:
-    def __init__(self):
-        self.active_connections = {}
-        
-    async def connect(self, ws: WebSocket, algo: str):
-        await ws.accept()
-        self.active_connections[algo] = ws
-        
-    def disconnect(self, algo: str):
-        if algo in self.active_connections:
-            del self.active_connections[algo]
-
-manager = ConnectionManager()
-
-async def game_loop(ws: WebSocket, algo: str, speed_ref: dict):
-    agent = HybridAgent(algo)
-    game = SnakeGame()
-    
-    while True:
-        try:
-            fps = SPEED_FPS[str(speed_ref.get("speed", 10))]
-            delay = 1.0 / fps
-            
-            state_old = build_state(game, extended=True)
-            
-            final_move, explored, path, algo_stat = agent.get_action(game, state_old)
-            
-            reward, done, score = game.play_step(final_move)
-            state_new = build_state(game, extended=True)
-            
-            agent.train_short_memory(state_old, final_move, reward, state_new, done)
-            agent.remember(state_old, final_move, reward, state_new, done)
-            
-            msg = {
-                "type": "step",
-                "algo": algo,
-                "snake": [[pt.x, pt.y] for pt in game.snake],
-                "food": [game.food.x, game.food.y],
-                "score": score,
-                "game_no": agent.n_games,
-                "record": agent.record,
-                "mean_score": round(agent.mean_score, 2),
-                "epsilon": round(agent.epsilon, 3),
-                "explored": explored,
-                "path": path,
-                "algo_stat": algo_stat,
-                "done": done
-            }
-            
-            await ws.send_json(msg)
-            
-            if done:
-                game.reset()
-                agent.n_games += 1
-                try:
-                    agent.rl.lifetime_games += 1
-                except AttributeError:
-                    pass
-                agent.train_long_memory()
-                
-                if score > agent.record:
-                    agent.record = score
-                    agent.save()
-                    
-                agent.total_score += score
-                agent.mean_score = agent.total_score / agent.n_games
-            
-            await asyncio.sleep(delay)
-            
-        except asyncio.CancelledError:
-            break
-        except Exception as e:
-            import traceback
-            print(f"Game loop error (recovering): {e}")
-            traceback.print_exc()
-            try:
-                game.reset()
-            except Exception:
-                game = SnakeGame()
-            continue
-
-@app.websocket("/ws/{algo}")
-async def websocket_endpoint(websocket: WebSocket, algo: str):
-    await manager.connect(websocket, algo)
-    speed_ref = {"speed": 10}
-    loop_task = None
-    
-    try:
-        while True:
-            data = await websocket.receive_json()
-            msg_type = data.get("type")
-            
-            if msg_type == "start":
-                if loop_task is not None and not loop_task.done():
-                    loop_task.cancel()
-                speed_ref["speed"] = data.get("speed", 10)
-                loop_task = asyncio.create_task(game_loop(websocket, algo, speed_ref))
-                
-            elif msg_type == "stop":
-                if loop_task is not None:
-                    loop_task.cancel()
-                    loop_task = None
-                    
-            elif msg_type == "set_speed":
-                speed_ref["speed"] = data.get("speed", 10)
-                
-    except WebSocketDisconnect:
-        manager.disconnect(algo)
-        if loop_task is not None:
-            loop_task.cancel()
 </file>
 
 <file path="README.md">
@@ -3078,6 +1405,1925 @@ Mark M1-03 as:
 - Do NOT delete or rename any existing file
 </file>
 
+<file path="agents/hybrid_agent.py">
+from agents.rl_agent import Agent
+
+import agents.bfs as bfs
+import agents.dfs as dfs
+import agents.ucs as ucs
+import agents.astar as astar
+import agents.best_first as best_first
+import agents.minimax as minimax
+
+class HybridAgent:
+    def __init__(self, algo_name):
+        self.algo_name = algo_name
+        self.rl = Agent()
+        
+        self.rl.save = self._custom_save
+        self.rl.load = self._custom_load
+        self.rl.load()
+        
+        self.solvers = {
+            "bfs": bfs.solve,
+            "dfs": dfs.solve,
+            "ucs": ucs.solve,
+            "astar": astar.solve,
+            "bestfirst": best_first.solve,
+            "minimax": minimax.solve
+        }
+        
+    def _custom_save(self):
+        import os, json, datetime, torch
+        folder_path = './model'
+        os.makedirs(folder_path, exist_ok=True)
+        file_path = os.path.join(folder_path, f'model_{self.algo_name}.pth')
+        torch.save(self.rl.model.state_dict(), file_path)
+        
+        metadata = {
+            "algo": self.algo_name,
+            "record": self.rl.record,
+            "n_games": self.rl.n_games,
+            "mean_score": self.rl.mean_score,
+            "timestamp": datetime.datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S")
+        }
+        json_path = os.path.join(folder_path, f'metadata_{self.algo_name}.json')
+        with open(json_path, 'w') as f:
+            json.dump(metadata, f)
+            
+    def _custom_load(self):
+        import os, json, torch
+        folder_path = './model'
+        pth_path = os.path.join(folder_path, f'model_{self.algo_name}.pth')
+        json_path = os.path.join(folder_path, f'metadata_{self.algo_name}.json')
+        
+        if os.path.exists(pth_path):
+            self.rl.model.load_state_dict(torch.load(pth_path, weights_only=True))
+            self.rl.model.train()
+            
+        if os.path.exists(json_path):
+            try:
+                with open(json_path, 'r') as f:
+                    meta = json.load(f)
+                self.rl.record = meta.get("record", 0)
+                # n_games persists so epsilon keeps decaying
+                self.rl.n_games = meta.get("n_games", 0)
+                self.rl.mean_score = meta.get("mean_score", 0.0)
+                self.rl.total_score = int(
+                    self.rl.mean_score * self.rl.n_games)
+            except Exception:
+                pass
+
+    def get_action(self, game, state):
+        # Pure DQN mode — no solver
+        if self.algo_name == "dqn" or self.algo_name not in self.solvers:
+            dqn_action = self.rl.get_action(state)
+            return dqn_action, [], [], self.rl.algo_stat
+
+        # Hybrid mode — algorithm LEADS, DQN trains in background
+        snake_coords = [tuple(p) for p in game.snake]
+        food_coord = tuple(game.food)
+
+        solver_res = self.solvers[self.algo_name](
+            snake_coords, food_coord, game.GRID_SIZE
+        )
+
+        algo_action = solver_res.get('action', [1, 0, 0])
+        path = solver_res.get('path', [])
+
+        # DQN still gets action for training purposes
+        # (so it learns from every step even when algo leads)
+        dqn_action = self.rl.get_action(state)
+
+        if len(path) > 0 or self.algo_name == "minimax":
+            # Algorithm found a path — follow it
+            # DQN trained on same experience anyway
+            final_action = algo_action
+        else:
+            # Algorithm found no path (dead end) — DQN takes over
+            final_action = dqn_action
+
+        return (
+            final_action,
+            solver_res.get('explored', []),
+            path,
+            solver_res.get('algo_stat', self.rl.algo_stat)
+        )
+    
+    @property
+    def n_games(self): return self.rl.n_games
+    @n_games.setter
+    def n_games(self, v): self.rl.n_games = v
+    @property
+    def record(self): return self.rl.record
+    @record.setter
+    def record(self, v): self.rl.record = v
+    @property
+    def mean_score(self): return self.rl.mean_score
+    @mean_score.setter
+    def mean_score(self, v): self.rl.mean_score = v
+    @property
+    def epsilon(self): return self.rl.epsilon
+    @property
+    def algo_stat(self): return self.rl.algo_stat
+    @property
+    def total_score(self): return self.rl.total_score
+    @total_score.setter
+    def total_score(self, v): self.rl.total_score = v
+    
+    def train_short_memory(self, *args): self.rl.train_short_memory(*args)
+    def remember(self, *args): self.rl.remember(*args)
+    def train_long_memory(self): self.rl.train_long_memory()
+    def save(self): self.rl.save()
+</file>
+
+<file path="agents/rl_agent.py">
+"""
+DQN Agent — based on patrickloeber/snake-ai-pytorch
+MIT License. Proven to score 10-15 within 50 games.
+"""
+import torch
+import random
+import numpy as np
+import os
+import json
+import datetime
+from collections import deque
+from game.state import build_state
+from game.snake import SnakeGame
+
+MAX_MEMORY = 100_000
+BATCH_SIZE = 1000
+LR = 0.001
+import torch.nn as nn
+import torch.optim as optim
+import torch.nn.functional as F
+
+
+class Linear_QNet(nn.Module):
+    def __init__(self, input_size, hidden_size, output_size):
+        super().__init__()
+        self.linear1 = nn.Linear(input_size, hidden_size)
+        self.linear2 = nn.Linear(hidden_size, output_size)
+
+    def forward(self, x):
+        x = F.relu(self.linear1(x))
+        x = self.linear2(x)
+        return x
+
+
+class QTrainer:
+    def __init__(self, model, lr, gamma):
+        self.lr = lr
+        self.gamma = gamma
+        self.model = model
+        self.optimizer = optim.Adam(model.parameters(), lr=self.lr)
+        self.criterion = nn.MSELoss()
+
+    def train_step(self, state, action, reward, next_state, done):
+        state = torch.tensor(np.array(state), dtype=torch.float)
+        next_state = torch.tensor(np.array(next_state), dtype=torch.float)
+        action = torch.tensor(np.array(action), dtype=torch.long)
+        reward = torch.tensor(np.array(reward), dtype=torch.float)
+
+        if len(state.shape) == 1:
+            state = torch.unsqueeze(state, 0)
+            next_state = torch.unsqueeze(next_state, 0)
+            action = torch.unsqueeze(action, 0)
+            reward = torch.unsqueeze(reward, 0)
+            done = (done,)
+
+        pred = self.model(state)
+        target = pred.clone()
+
+        for idx in range(len(done)):
+            Q_new = reward[idx]
+            if not done[idx]:
+                Q_new = reward[idx] + self.gamma * torch.max(
+                    self.model(next_state[idx]))
+            target[idx][torch.argmax(action[idx]).item()] = Q_new
+
+        self.optimizer.zero_grad()
+        loss = self.criterion(target, pred)
+        loss.backward()
+        self.optimizer.step()
+
+
+class Agent:
+    def __init__(self):
+        self.n_games = 0
+        self.epsilon = 0
+        self.gamma = 0.9
+        self.memory = deque(maxlen=MAX_MEMORY)
+        # EXACT patrickloeber architecture: 11→256→3 (2 layers)
+        self.model = Linear_QNet(28, 256, 3)
+        self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
+
+        self.record = 0
+        self.total_score = 0
+        self.mean_score = 0.0
+        self.algo_stat = {"label": "epsilon", "value": 0}
+
+        self.load()
+
+    def remember(self, state, action, reward, next_state, done):
+        self.memory.append((state, action, reward, next_state, done))
+
+    def train_long_memory(self):
+        if len(self.memory) > BATCH_SIZE:
+            mini_sample = random.sample(self.memory, BATCH_SIZE)
+        else:
+            mini_sample = list(self.memory)
+        states, actions, rewards, next_states, dones = zip(*mini_sample)
+        self.trainer.train_step(states, actions, rewards,
+                                next_states, dones)
+
+    def train_short_memory(self, state, action, reward,
+                           next_state, done):
+        self.trainer.train_step(state, action, reward,
+                                next_state, done)
+
+    def get_action(self, state):
+        # EXACT patrickloeber epsilon:
+        # epsilon = 80 - n_games
+        # explore if randint(0,200) < epsilon
+        self.epsilon = 80 - self.n_games
+        final_move = [0, 0, 0]
+        if random.randint(0, 200) < self.epsilon:
+            move = random.randint(0, 2)
+            final_move[move] = 1
+        else:
+            state0 = torch.tensor(state, dtype=torch.float)
+            prediction = self.model(state0)
+            move = torch.argmax(prediction).item()
+            final_move[move] = 1
+        # update display stat (show as 0-1 ratio)
+        display_eps = max(0, self.epsilon) / 200
+        self.algo_stat["value"] = round(display_eps, 3)
+        return final_move
+
+    def save(self, algo_name="dqn"):
+        folder_path = './model'
+        os.makedirs(folder_path, exist_ok=True)
+        torch.save(self.model.state_dict(),
+                   os.path.join(folder_path,
+                                f'model_{algo_name}.pth'))
+        metadata = {
+            "algo": algo_name,
+            "record": self.record,
+            "n_games": self.n_games,
+            "mean_score": self.mean_score,
+            "timestamp": datetime.datetime.now().strftime(
+                "%Y-%m-%d %H:%M:%S")
+        }
+        with open(os.path.join(folder_path,
+                               f'metadata_{algo_name}.json'),
+                  'w') as f:
+            json.dump(metadata, f)
+
+    def load(self, algo_name="dqn"):
+        folder_path = './model'
+        pth = os.path.join(folder_path, f'model_{algo_name}.pth')
+        meta = os.path.join(folder_path,
+                            f'metadata_{algo_name}.json')
+        if os.path.exists(pth):
+            self.model.load_state_dict(
+                torch.load(pth, weights_only=True))
+            self.model.train()
+        if os.path.exists(meta):
+            try:
+                with open(meta) as f:
+                    d = json.load(f)
+                self.record = d.get("record", 0)
+                # n_games PERSISTS across sessions
+                # so epsilon keeps decaying
+                self.n_games = d.get("n_games", 0)
+                self.mean_score = d.get("mean_score", 0.0)
+                self.total_score = int(
+                    self.mean_score * self.n_games)
+            except Exception:
+                pass
+</file>
+
+<file path="frontend/index.html">
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>AI Snake Arena</title>
+  <style>
+    :root {
+      /* Accent Color Map */
+      --color-dqn: #7c6ef7;
+      --color-bfs: #3b9eff;
+      --color-dfs: #ff7043;
+      --color-ucs: #26c6a0;
+      --color-astar: #ffd740;
+      --color-bestfirst: #e040fb;
+      --color-minimax: #ff4081;
+
+      /* UI Theme */
+      --bg-color: #0a0a0c;
+      --grid-line: #111118;
+      --text-main: #ffffff;
+      --text-muted: #888899;
+      --panel-bg: rgba(255, 255, 255, 0.03);
+      --panel-border: rgba(255, 255, 255, 0.08);
+      --font-family: 'Inter', system-ui, sans-serif;
+    }
+    
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background-color: var(--bg-color);
+      color: var(--text-main);
+      font-family: var(--font-family);
+      overflow: hidden; /* Lock native scrolling entirely */
+    }
+
+    h1 { font-size: 4rem; font-weight: 800; letter-spacing: -0.05em; margin-bottom: 1rem; text-shadow: 0 4px 12px rgba(0,0,0,0.5); }
+    h2 { font-size: 2.5rem; font-weight: 700; letter-spacing: -0.03em; margin-bottom: 0.5rem; }
+    p { color: var(--text-muted); line-height: 1.6; }
+
+    /* --- Hero Section --- */
+    #hero {
+      position: relative;
+      height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      text-align: center;
+      overflow: hidden;
+    }
+
+    #hero-canvas {
+      position: absolute;
+      top: 0; left: 0;
+      width: 100%; height: 100%;
+      z-index: 0; opacity: 0.4;
+    }
+
+    .hero-content {
+      position: relative;
+      z-index: 1;
+      max-width: 800px;
+      padding: 3rem;
+      background: rgba(10, 10, 12, 0.65);
+      border-radius: 20px;
+      backdrop-filter: blur(12px);
+      box-shadow: 0 16px 40px rgba(0,0,0,0.5);
+      border: 1px solid var(--panel-border);
+    }
+
+    .subtitle { font-size: 1.25rem; margin-bottom: 2rem; }
+    
+    .tech-chips {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.75rem;
+      justify-content: center;
+      margin-bottom: 3rem;
+    }
+
+    .chip {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      padding: 0.5rem 1rem;
+      border-radius: 999px;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: #e2e2ec;
+      transition: all 0.3s ease;
+    }
+    .chip:hover { background: rgba(255, 255, 255, 0.1); transform: translateY(-2px); }
+
+    .scroll-cta {
+      position: absolute;
+      bottom: 2rem;
+      left: 50%;
+      transform: translateX(-50%);
+      z-index: 1;
+      animation: bounce 2s infinite;
+      cursor: pointer;
+      opacity: 0.7;
+      transition: opacity 0.3s;
+    }
+    .scroll-cta:hover { opacity: 1; }
+
+    @keyframes bounce {
+      0%, 20%, 50%, 80%, 100% { transform: translate(-50%, 0); }
+      40% { transform: translate(-50%, -15px); }
+      60% { transform: translate(-50%, -7px); }
+    }
+
+    /* --- Hover Cards --- */
+    #hero-cards {
+      display: flex;
+      flex-wrap: wrap;
+      justify-content: center;
+      gap: 1rem;
+      margin-top: 2rem;
+      opacity: 0; /* Hidden initially for GSAP */
+      pointer-events: none; /* Disabled until revealed */
+    }
+    #hero-cards.active { pointer-events: all; }
+
+    .hero-card {
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      padding: 1rem 1.5rem;
+      border-radius: 12px;
+      cursor: pointer;
+      text-align: left;
+      min-width: 180px;
+      transition: all 0.3s cubic-bezier(0.25, 0.8, 0.25, 1);
+      border-top: 3px solid var(--card-accent);
+      opacity: 0; /* Individual stagger state */
+      transform: translateY(20px);
+    }
+    .hero-card:hover {
+      transform: scale(1.05) translateY(-5px) !important;
+      background: rgba(255, 255, 255, 0.08);
+      box-shadow: 0 10px 20px rgba(0,0,0,0.4);
+      border-color: var(--card-accent);
+    }
+    .hero-card-title { font-weight: 700; font-size: 1rem; color: var(--text-main); margin-bottom: 0.25rem; }
+    .hero-card-sub { font-size: 0.75rem; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;}
+
+    /* --- Horizontal Wrapper --- */
+    #main-slider {
+      display: flex;
+      width: 700vw; /* 7 sections * 100vw */
+      height: 100vh;
+      transform: translateX(0);
+      transition: transform 0.8s cubic-bezier(0.65, 0, 0.35, 1);
+      will-change: transform;
+      position: absolute;
+      top: 0;
+      left: 0;
+      pointer-events: none; /* Ignore clicks when offscreen */
+    }
+    #main-slider.active { pointer-events: all; }
+
+    /* --- Algo Section --- */
+    .algo-section {
+      width: 100vw;
+      height: 100vh;
+      flex-shrink: 0;
+      padding: 4rem 2rem;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .section-header {
+      width: 100%;
+      max-width: 1200px;
+      margin-bottom: 2rem;
+      display: flex;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+
+    .algo-dot {
+      width: 20px; height: 20px;
+      border-radius: 50%;
+      background-color: var(--section-accent);
+      box-shadow: 0 0 12px var(--section-accent);
+      margin-top: 10px;
+    }
+
+    .algo-badge {
+      font-size: 0.75rem;
+      font-weight: 700;
+      padding: 0.25rem 0.75rem;
+      border-radius: 4px;
+      background: rgba(255,255,255,0.1);
+      color: var(--section-accent);
+      border: 1px solid var(--section-accent);
+      text-transform: uppercase;
+      letter-spacing: 1px;
+      vertical-align: middle;
+      margin-left: 0.5rem;
+    }
+
+    .section-title-wrap { flex-grow: 1; }
+
+    .split-layout {
+      display: flex;
+      width: 100%;
+      max-width: 1200px;
+      gap: 2rem;
+    }
+    @media (max-width: 900px) { .split-layout { flex-direction: column; } }
+
+    .panel {
+      flex: 1;
+      background: var(--panel-bg);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 1.5rem;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .panel-header {
+      font-size: 1.1rem;
+      font-weight: 600;
+      color: var(--text-muted);
+      margin-bottom: 1rem;
+    }
+
+    .chart-container { flex-grow: 1; position: relative; min-height: 300px; }
+
+    .game-container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+
+    .game-canvas {
+      background: #0a0a0c;
+      border: 1px solid var(--grid-line);
+      border-radius: 8px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+      image-rendering: pixelated; /* Crisp grid lines */
+    }
+
+    .controls {
+      display: flex;
+      gap: 1rem;
+      margin-top: 1.5rem;
+      width: 100%;
+      max-width: 400px;
+    }
+
+    .btn {
+      padding: 0.75rem 1.5rem;
+      border: none;
+      border-radius: 8px;
+      font-size: 1rem;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 0.5rem;
+      transition: all 0.2s;
+    }
+
+    .btn-play { background: var(--section-accent); color: #000; flex-grow: 1; }
+    .btn-play:hover { filter: brightness(1.2); }
+    .btn-play:disabled { opacity: 0.5; filter: grayscale(1); cursor: not-allowed; }
+
+    .btn-stop { background: rgba(255, 68, 68, 0.15); color: #ff4444; border: 1px solid currentColor; }
+    .btn-stop:hover { background: rgba(255, 68, 68, 0.25); }
+    .btn-stop:disabled { opacity: 0.5; cursor: not-allowed; border-color: transparent; }
+
+    .speed-select {
+      background: rgba(255, 255, 255, 0.05);
+      color: white;
+      border: 1px solid var(--panel-border);
+      border-radius: 8px;
+      padding: 0.5rem;
+      font-family: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .speed-select option { background: #1a1a1f; }
+
+    .stat-cards {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 1rem;
+      margin-top: 1.5rem;
+      width: 100%;
+    }
+
+    .stat-card {
+      background: rgba(0, 0, 0, 0.2);
+      border: 1px solid var(--panel-border);
+      border-radius: 12px;
+      padding: 1rem;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      justify-content: center;
+    }
+
+    .stat-label {
+      font-size: 0.7rem;
+      color: var(--text-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 0.5rem;
+    }
+
+    .stat-value {
+      font-size: 1.5rem;
+      font-weight: 700;
+      font-variant-numeric: tabular-nums;
+    }
+    .stat-value.accent { color: var(--section-accent); }
+
+    /* Each section defines --section-accent locally */
+    #sec-dqn { --section-accent: var(--color-dqn); }
+    #sec-bfs { --section-accent: var(--color-bfs); }
+    #sec-dfs { --section-accent: var(--color-dfs); }
+    #sec-ucs { --section-accent: var(--color-ucs); }
+    #sec-astar { --section-accent: var(--color-astar); }
+    #sec-bestfirst { --section-accent: var(--color-bestfirst); }
+    #sec-minimax { --section-accent: var(--color-minimax); }
+
+#hero {
+  position: relative;
+  height: 100vh;
+  width: 100%;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #08080c;
+}
+
+#hero-video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+  opacity: 0.55;
+}
+
+#hero-overlay {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    to bottom,
+    rgba(8,8,12,0.3) 0%,
+    rgba(8,8,12,0.6) 60%,
+    rgba(8,8,12,0.95) 100%
+  );
+  z-index: 1;
+}
+
+#hero-text-container {
+  position: relative;
+  z-index: 2;
+  text-align: center;
+  padding: 2rem 1.5rem;
+  max-width: 780px;
+  width: 100%;
+}
+
+#hl-eyebrow {
+  opacity: 0;
+  transform: translateY(16px);
+  font-size: 0.72rem;
+  letter-spacing: 0.18em;
+  color: #7c6ef7;
+  text-transform: uppercase;
+  margin-bottom: 1rem;
+  font-weight: 500;
+}
+
+#hl-1 {
+  opacity: 0;
+  transform: translateY(32px);
+  font-size: clamp(2.8rem, 7vw, 5rem);
+  font-weight: 800;
+  letter-spacing: -0.04em;
+  color: #ffffff;
+  line-height: 1.05;
+  margin-bottom: 1rem;
+}
+
+#hl-2 {
+  opacity: 0;
+  transform: translateY(24px);
+  font-size: clamp(1rem, 2.5vw, 1.35rem);
+  color: #9d8fff;
+  font-weight: 500;
+  margin-bottom: 1.2rem;
+}
+
+#hl-3 {
+  opacity: 0;
+  transform: translateY(24px);
+  font-size: clamp(0.85rem, 1.8vw, 1rem);
+  color: #666677;
+  line-height: 1.75;
+  margin-bottom: 1.5rem;
+  max-width: 560px;
+  margin-left: auto;
+  margin-right: auto;
+}
+
+#hl-4 {
+  opacity: 0;
+  transform: translateY(20px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: center;
+  margin-bottom: 2rem;
+}
+
+.tech-tag {
+  font-size: 0.75rem;
+  padding: 0.3rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(124,110,247,0.3);
+  color: #7c6ef7;
+  background: rgba(124,110,247,0.08);
+  font-weight: 500;
+  letter-spacing: 0.04em;
+}
+
+#hl-5 {
+  opacity: 0;
+  transform: translateY(20px);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.6rem;
+}
+
+#hero-cta {
+  padding: 0.85rem 2.2rem;
+  background: rgba(124,110,247,0.12);
+  border: 1px solid rgba(124,110,247,0.5);
+  border-radius: 999px;
+  color: #c4b9ff;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.25s ease;
+  letter-spacing: 0.02em;
+}
+
+#hero-cta:hover {
+  background: rgba(124,110,247,0.25);
+  border-color: #7c6ef7;
+  color: #ffffff;
+  transform: translateY(-2px);
+}
+
+#hero-scroll-hint {
+  font-size: 0.72rem;
+  color: #333344;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  margin: 0;
+  animation: pulse-hint 2s ease-in-out infinite;
+}
+
+@keyframes pulse-hint {
+  0%, 100% { opacity: 0.4; }
+  50% { opacity: 1; }
+}
+
+#hero-progress {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: rgba(255,255,255,0.05);
+  z-index: 10;
+}
+
+#hero-progress-bar {
+  height: 100%;
+  width: 0%;
+  background: #7c6ef7;
+  transition: width 0.3s ease;
+}
+
+body.scroll-locked {
+  overflow: hidden;
+}
+
+  </style>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/gsap.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/gsap/3.12.2/ScrollTrigger.min.js"></script>
+</head>
+<body>
+
+  <!-- Hero Section -->
+  <section id="hero">
+
+    <video
+      id="hero-video"
+      autoplay muted loop playsinline
+      src="/static/snake_loop.mp4"
+    ></video>
+
+    <div id="hero-overlay"></div>
+
+    <div id="hero-text-container">
+      <p id="hl-eyebrow">SRMIST · FT3 · AI Project 2026</p>
+      <h1 id="hl-1">AI Snake Arena</h1>
+      <p id="hl-2">Reinforcement Learning meets Classical AI</p>
+      <p id="hl-3">
+        A Deep Q-Network agent learns to play Snake from scratch.
+        Then BFS, A*, DFS, UCS, and Minimax show how classical
+        algorithms change everything.
+      </p>
+      <div id="hl-4">
+        <span class="tech-tag">PyTorch</span>
+        <span class="tech-tag">FastAPI</span>
+        <span class="tech-tag">WebSocket</span>
+        <span class="tech-tag">28-Input State</span>
+        <span class="tech-tag">DQN</span>
+      </div>
+      <div id="hl-5">
+        <button id="hero-cta" onclick="unlockScroll()">
+          Explore the algorithms ↓
+        </button>
+        <p id="hero-scroll-hint">scroll to reveal</p>
+      </div>
+      <div id="hero-cards"></div>
+    </div>
+
+    <div id="hero-progress">
+      <div id="hero-progress-bar"></div>
+    </div>
+
+  </section>
+
+  <!-- Main Container -->
+  <div id="main-slider">
+  </div>
+
+  <script>
+    // --- Configuration ---
+    const ALGOS = [
+      { id: 'dqn', name: 'Pure DQN', badge: 'Deep Q-Network', statLabel: 'epsilon', desc: 'A neural network learning strictly via random exploration and delayed rewards. Fails often early on.' },
+      { id: 'bfs', name: 'DQN + BFS', badge: 'Breadth-First Search', statLabel: 'nodes', desc: 'DQN guided by an optimal unweighted shortest-path solver. Explores in all directions equally.' },
+      { id: 'dfs', name: 'DQN + DFS', badge: 'Depth-First Search', statLabel: 'nodes', desc: 'DQN guided by an aggressive solver diving deep before backtracking. Often finds sub-optimal twisted paths.' },
+      { id: 'ucs', name: 'DQN + UCS', badge: 'Uniform Cost Search', statLabel: 'cost', desc: 'DQN guided by Dijkstra\'s algorithm equivalent on uniform grid.' },
+      { id: 'astar', name: 'DQN + A*', badge: 'A* Search', statLabel: 'path', desc: 'DQN guided by A* using Manhattan distance heuristic. Extremely efficient and optimal.' },
+      { id: 'bestfirst', name: 'DQN + Best-First', badge: 'Greedy Best-First', statLabel: 'h', desc: 'DQN guided purely by Manhattan distance to food. Can get trapped in concave shapes.' },
+      { id: 'minimax', name: 'DQN + Minimax', badge: 'Alpha-Beta Pruning', statLabel: 'depth', desc: 'DQN guided by adversarial search treating the board as a game against a phantom blocker.' }
+    ];
+
+    const ACCENTS = {
+      'dqn': '#7c6ef7',
+      'bfs': '#3b9eff',
+      'dfs': '#ff7043',
+      'ucs': '#26c6a0',
+      'astar': '#ffd740',
+      'bestfirst': '#e040fb',
+      'minimax': '#ff4081'
+    };
+
+    const GRID_SIZE = 16;
+    const CANVAS_PX = 400; // 16 * 25
+    const CELL_PX = CANVAS_PX / GRID_SIZE;
+
+    // --- Generate Sections ---
+    const container = document.getElementById('main-slider');
+    const cardsContainer = document.getElementById('hero-cards');
+    
+    ALGOS.forEach((algo, index) => {
+      // 1. Generate Hover Card
+      const card = document.createElement('div');
+      card.className = 'hero-card';
+      card.style.setProperty('--card-accent', ACCENTS[algo.id]);
+      card.innerHTML = `
+        <div class="hero-card-title">${algo.name}</div>
+        <div class="hero-card-sub">${algo.badge}</div>
+      `;
+      card.onclick = () => jumpToSection(index);
+      cardsContainer.appendChild(card);
+
+      // 2. Generate Section (Keep existing section.innerHTML code!)
+      const section = document.createElement('section');
+      section.id = `sec-${algo.id}`;
+      section.className = 'algo-section';
+      section.dataset.algo = algo.id;
+      
+      section.innerHTML = `
+        <div class="section-header">
+          <div class="algo-dot"></div>
+          <div class="section-title-wrap">
+            <h2>${algo.name} <span class="algo-badge">${algo.badge}</span></h2>
+            <p>${algo.desc}</p>
+          </div>
+        </div>
+        <div class="split-layout">
+          <div class="panel">
+            <div class="panel-header">Performance History</div>
+            <div class="chart-container">
+              <canvas id="chart-${algo.id}"></canvas>
+            </div>
+          </div>
+          <div class="panel">
+            <div class="panel-header">Live Simulation</div>
+            <div class="game-container">
+              <canvas id="canvas-${algo.id}" width="${CANVAS_PX}" height="${CANVAS_PX}" class="game-canvas"></canvas>
+            </div>
+            <div class="controls">
+              <button class="btn btn-play" id="play-${algo.id}" onclick="window.startAlgo('${algo.id}')">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M8 5v14l11-7z"/></svg> Play
+              </button>
+              <button class="btn btn-stop" id="stop-${algo.id}" onclick="window.stopAlgo('${algo.id}')" disabled>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M6 6h12v12H6z"/></svg> Stop
+              </button>
+              <select class="speed-select" id="speed-${algo.id}" onchange="window.setSpeed('${algo.id}', this.value)">
+                <option value="1">1x Speed</option>
+                <option value="2">2x Speed</option>
+                <option value="10" selected>10x Speed</option>
+                <option value="50">50x Speed</option>
+              </select>
+            </div>
+            <div class="stat-cards">
+              <div class="stat-card">
+                <div class="stat-label">Game No</div>
+                <div class="stat-value" id="stat-game-${algo.id}">0</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Score</div>
+                <div class="stat-value" id="stat-score-${algo.id}">0</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">Record</div>
+                <div class="stat-value" id="stat-record-${algo.id}">0</div>
+              </div>
+              <div class="stat-card">
+                <div class="stat-label">${algo.statLabel}</div>
+                <div class="stat-value accent" id="stat-algostat-${algo.id}">0</div>
+              </div>
+            </div>
+          </div>
+        </div>
+      `;
+      container.appendChild(section);
+    });
+
+    // --- Canvas Renderer ---
+    function hexToRgba(hex, alpha) {
+        const r = parseInt(hex.slice(1, 3), 16);
+        const g = parseInt(hex.slice(3, 5), 16);
+        const b = parseInt(hex.slice(5, 7), 16);
+        return `rgba(${r}, ${g}, ${b}, ${alpha})`;
+    }
+
+    function renderFrame(ctx, frameData, accentColor) {
+        // 1. Fill background #0a0a0c
+        ctx.fillStyle = '#0a0a0c';
+        ctx.fillRect(0, 0, CANVAS_PX, CANVAS_PX);
+        
+        // 2. Draw grid lines (0.5px, #111118)
+        ctx.strokeStyle = '#111118';
+        ctx.lineWidth = 0.5;
+        for (let i = 0; i <= GRID_SIZE; i++) {
+            const pos = i * CELL_PX;
+            ctx.beginPath(); ctx.moveTo(pos, 0); ctx.lineTo(pos, CANVAS_PX); ctx.stroke();
+            ctx.beginPath(); ctx.moveTo(0, pos); ctx.lineTo(CANVAS_PX, pos); ctx.stroke();
+        }
+
+        const drawCell = (x, y, color) => {
+            if (x < 0 || x >= GRID_SIZE || y < 0 || y >= GRID_SIZE) return; // boundary safeguard
+            ctx.fillStyle = color;
+            ctx.fillRect(x * CELL_PX + 1, y * CELL_PX + 1, CELL_PX - 2, CELL_PX - 2);
+        };
+
+        // 3. Draw explored cells (accent color at 12% opacity)
+        if (frameData.explored && frameData.explored.length > 0) {
+            const clr = hexToRgba(accentColor, 0.12);
+            frameData.explored.forEach(([x, y]) => drawCell(x, y, clr));
+        }
+
+        // 4. Draw path cells (accent color at 25% opacity)
+        if (frameData.path && frameData.path.length > 0) {
+            const clr = hexToRgba(accentColor, 0.25);
+            frameData.path.forEach(([x, y]) => drawCell(x, y, clr));
+        }
+
+        // 5. & 6. Draw snake
+        if (frameData.snake && frameData.snake.length > 0) {
+            const len = frameData.snake.length;
+            frameData.snake.forEach(([x, y], i) => {
+                if (i === 0) {
+                    // Head: full accent + 2 white eye dots
+                    drawCell(x, y, accentColor);
+                    
+                    // compute eye positions based on body direction
+                    const cx = x * CELL_PX + CELL_PX/2;
+                    const cy = y * CELL_PX + CELL_PX/2;
+                    ctx.fillStyle = 'white';
+                    ctx.beginPath(); ctx.arc(cx - 3, cy - 3, 2, 0, Math.PI * 2); ctx.fill();
+                    ctx.beginPath(); ctx.arc(cx + 3, cy - 3, 2, 0, Math.PI * 2); ctx.fill();
+                } else {
+                    // Body: accent color at decreasing opacity (1.0 -> 0.4)
+                    const op = 1.0 - (0.6 * (Number(i) / (len - 1 || 1)));
+                    drawCell(x, y, hexToRgba(accentColor, op));
+                }
+            });
+        }
+
+        // 7. Draw food: red circle (#ff4444) with small highlight dot
+        if (frameData.food) {
+            const [x, y] = frameData.food;
+            const cx = x * CELL_PX + CELL_PX / 2;
+            const cy = y * CELL_PX + CELL_PX / 2;
+            ctx.fillStyle = '#ff4444';
+            ctx.beginPath(); ctx.arc(cx, cy, CELL_PX / 2 - 2, 0, Math.PI * 2); ctx.fill();
+            
+            ctx.fillStyle = 'white';
+            ctx.beginPath(); ctx.arc(cx - 3, cy - 3, 2, 0, Math.PI * 2); ctx.fill();
+        }
+    }
+
+    // --- Chart & WebSocket Managers ---
+    const charts = {};
+    const wsConnections = {};
+
+    function initChart(algoId, accentColor) {
+        const ctx = document.getElementById(`chart-${algoId}`).getContext('2d');
+        charts[algoId] = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: [],
+                datasets: [
+                    {
+                        label: 'Score',
+                        data: [],
+                        borderColor: accentColor,
+                        backgroundColor: hexToRgba(accentColor, 0.1),
+                        borderWidth: 2,
+                        fill: true,
+                        tension: 0.2, // smoother line
+                        pointRadius: 0
+                    },
+                    {
+                        label: 'Mean Score',
+                        data: [],
+                        borderColor: hexToRgba(accentColor, 0.6),
+                        borderWidth: 2,
+                        borderDash: [5, 5],
+                        fill: false,
+                        tension: 0.2,
+                        pointRadius: 0
+                    }
+                ]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: {
+                        title: { display: true, text: 'Games', color: '#888899' },
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#888899', maxTicksLimit: 10 }
+                    },
+                    y: {
+                        beginAtZero: true,
+                        title: { display: true, text: 'Score', color: '#888899' },
+                        grid: { color: 'rgba(255,255,255,0.05)' },
+                        ticks: { color: '#888899' },
+                        suggestedMax: 50 // initial scale up to sensible number
+                    }
+                },
+                plugins: { legend: { labels: { color: '#e2e2ec' } } }
+            }
+        });
+    }
+
+    class WSManager {
+        constructor(algoId) {
+            this.algoId = algoId;
+            this.ws = null;
+            this.accentColor = ACCENTS[algoId];
+            this.canvasCtx = document.getElementById(`canvas-${algoId}`).getContext('2d');
+            this.chart = charts[algoId];
+            this.gameDataBuffer = [];
+        }
+
+        connect(speed) {
+            const url = `ws://${window.location.host}/ws/${this.algoId}`;
+            this.ws = new WebSocket(url);
+
+            this.ws.onopen = () => {
+                const msg = { type: "start", algo: this.algoId, speed: parseInt(speed) };
+                this.ws.send(JSON.stringify(msg));
+                this.updateUI(true);
+            };
+
+            this.ws.onmessage = (e) => {
+                const data = JSON.parse(e.data);
+                if (data.type === 'step') {
+                    // 1. Draw frame
+                    renderFrame(this.canvasCtx, data, this.accentColor);
+                    
+                    // 2. Update stats
+                    document.getElementById(`stat-game-${this.algoId}`).textContent = data.game_no;
+                    document.getElementById(`stat-score-${this.algoId}`).textContent = data.score;
+                    document.getElementById(`stat-record-${this.algoId}`).textContent = data.record;
+                    if(data.algo_stat) {
+                        let v = data.algo_stat.value;
+                        if (typeof v === 'number' && !Number.isInteger(v)) v = v.toFixed(2);
+                        document.getElementById(`stat-algostat-${this.algoId}`).textContent = v;
+                    }
+
+                    // 3. Update chart if game done
+                    if (data.done) {
+                        const scoreData = this.chart.data.datasets[0].data;
+                        const meanData = this.chart.data.datasets[1].data;
+                        const labels = this.chart.data.labels;
+
+                        labels.push(data.game_no);
+                        scoreData.push(data.score);
+                        meanData.push(data.mean_score);
+
+                        // keep last 150 points for performance
+                        if (labels.length > 150) {
+                            labels.shift(); scoreData.shift(); meanData.shift();
+                        }
+                        this.chart.update();
+                    }
+                }
+            };
+
+            this.ws.onclose = () => { this.updateUI(false); this.ws = null; };
+            this.ws.onerror = (err) => console.error(`[${this.algoId}] WS Error:`, err);
+        }
+
+        disconnect() {
+            if (this.ws) {
+                this.ws.send(JSON.stringify({ type: "stop" }));
+                this.ws.close();
+            }
+        }
+
+        setSpeed(newSpeed) {
+            if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                this.ws.send(JSON.stringify({ type: "set_speed", speed: parseInt(newSpeed) }));
+            }
+        }
+
+        updateUI(isPlaying) {
+            document.getElementById(`play-${this.algoId}`).disabled = isPlaying;
+            document.getElementById(`stop-${this.algoId}`).disabled = !isPlaying;
+        }
+    }
+
+    // Attach to window so buttons can trigger them
+    window.startAlgo = (algoId) => {
+        if (!wsConnections[algoId]) wsConnections[algoId] = new WSManager(algoId);
+        const speed = document.getElementById(`speed-${algoId}`).value;
+        wsConnections[algoId].connect(speed);
+    };
+
+    window.stopAlgo = (algoId) => {
+        if (wsConnections[algoId]) wsConnections[algoId].disconnect();
+    };
+
+    window.setSpeed = (algoId, speed) => {
+        if (wsConnections[algoId]) wsConnections[algoId].setSpeed(speed);
+    };
+
+    // --- Init: Render blank boards, setup observers ---
+    ALGOS.forEach(algo => {
+        initChart(algo.id, ACCENTS[algo.id]);
+        const ctx = document.getElementById(`canvas-${algo.id}`).getContext('2d');
+        renderFrame(ctx, {}, ACCENTS[algo.id]);
+    });
+
+
+
+
+  // ── Scrollytelling & Locked Horizontal Snap ──────────────────────────
+  gsap.registerPlugin(ScrollTrigger);
+
+  const HERO_LINES = ['#hl-eyebrow', '#hl-1', '#hl-2', '#hl-3', '#hl-4', '#hl-5'];
+  let revealIndex = 0;
+  let heroUnlocked = false; // True when lines are done
+  let cardsRevealed = false; // True when cards are shown
+  let currentSlide = -1; // -1 is Hero, 0-6 are Algo sections
+  let scrollCooldown = false;
+
+  const progressBar = document.getElementById('hero-progress-bar');
+  const slider = document.getElementById('main-slider');
+  const hero = document.getElementById('hero');
+  const cardsContainer = document.getElementById('hero-cards');
+
+  // Fade in first lines automatically
+  setTimeout(() => { revealNext(); setTimeout(() => revealNext(), 500); }, 300);
+
+  function revealNext() {
+    if (revealIndex === 0) {
+      gsap.to('#hero-video', { opacity: 0.55, duration: 1.5, ease: 'power2.out' });
+      gsap.to('#hero-overlay', { opacity: 1, duration: 1.5, ease: 'power2.out' });
+    }
+
+    if (revealIndex < HERO_LINES.length) {
+      const el = document.querySelector(HERO_LINES[revealIndex]);
+      gsap.to(el, { opacity: 1, y: 0, duration: 0.75, ease: 'power3.out' });
+      revealIndex++;
+      progressBar.style.width = (revealIndex / HERO_LINES.length) * 100 + '%';
+    } 
+    
+    if (revealIndex >= HERO_LINES.length && !cardsRevealed) {
+      heroUnlocked = true;
+      revealCards();
+    }
+  }
+
+  function revealCards() {
+    cardsRevealed = true;
+    gsap.to(cardsContainer, { opacity: 1, duration: 0.5 });
+    gsap.to('.hero-card', { 
+      opacity: 1, 
+      y: 0, 
+      stagger: 0.1, 
+      duration: 0.6, 
+      ease: 'back.out(1.7)',
+      onComplete: () => cardsContainer.classList.add('active')
+    });
+  }
+
+  // Called by clicking a card
+  window.jumpToSection = (index) => {
+    currentSlide = index;
+    updateSlider();
+  };
+
+  function updateSlider() {
+    if (currentSlide === -1) {
+      // Show Hero
+      gsap.to(hero, { opacity: 1, duration: 0.8, pointerEvents: 'all' });
+      slider.style.transform = `translateX(0)`;
+      slider.classList.remove('active');
+    } else {
+      // Hide Hero, Slide to Section
+      gsap.to(hero, { opacity: 0, duration: 0.8, pointerEvents: 'none' });
+      slider.style.transform = `translateX(-${currentSlide * 100}vw)`;
+      slider.classList.add('active');
+    }
+  }
+
+  function handleScroll(direction) {
+    if (scrollCooldown) return;
+
+    if (currentSlide === -1) {
+      // In Hero Section
+      if (direction > 0) {
+        if (!cardsRevealed) {
+          triggerCooldown(550);
+          revealNext();
+        } else {
+          // Cards are shown, slide down to first algo
+          triggerCooldown(1000);
+          currentSlide = 0;
+          updateSlider();
+        }
+      }
+    } else {
+      // In Horizontal Slider
+      triggerCooldown(1000); // Prevent double-swipes
+      if (direction > 0 && currentSlide < ALGOS.length - 1) {
+        currentSlide++; // Go Right
+      } else if (direction < 0 && currentSlide >= 0) {
+        currentSlide--; // Go Left (or back to Hero if -1)
+      }
+      updateSlider();
+    }
+  }
+
+  function triggerCooldown(ms) {
+    scrollCooldown = true;
+    setTimeout(() => { scrollCooldown = false; }, ms);
+  }
+
+  // Input Listeners
+  window.addEventListener('wheel', (e) => {
+    e.preventDefault(); // Stop native scrolling entirely
+    if (Math.abs(e.deltaY) > 20) handleScroll(e.deltaY);
+  }, { passive: false });
+
+  let _touchY = 0;
+  window.addEventListener('touchstart', (e) => _touchY = e.touches[0].clientY, { passive: true });
+  window.addEventListener('touchmove', (e) => {
+    e.preventDefault();
+    const delta = _touchY - e.touches[0].clientY;
+    if (Math.abs(delta) > 40) handleScroll(delta);
+  }, { passive: false });
+
+  window.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowRight' || e.key === ' ') {
+      e.preventDefault(); handleScroll(1);
+    } else if (e.key === 'ArrowUp' || e.key === 'ArrowLeft') {
+      e.preventDefault(); handleScroll(-1);
+    }
+  });
+
+  </script>
+</body>
+</html>
+</file>
+
+<file path="game/snake_sensors.py">
+"""
+SnakeSensors — adapted from SnakeQ by ludius0 (MIT License)
+Provides 8-direction vision rays for wall distance, food detection, body distance.
+"""
+import numpy as np
+
+
+class SnakeSensors:
+    def __init__(self, row, moves):
+        self.row = row
+        self.dis = self.row - 1
+        self.moves = moves
+        self.next_to_head_dir = [(1, 0), (0, 1), (-1, 0), (0, -1)]
+
+    def update_sensor_board(self, board, snake_head):
+        self.board = board
+        self.head_y, self.head_x = snake_head
+        self.dis_y_down = self.dis - self.head_y
+        self.dis_y_up = self.dis - self.dis_y_down
+        self.dis_x_right = self.dis - self.head_x
+        self.dis_x_left = self.dis - self.dis_x_right
+
+    def check_up(self, target):
+        if self.head_y == 0: return 0
+        for i in range(self.head_y - 1, -1, -1):
+            if self.board[i, self.head_x] == target:
+                return i
+        return 0
+
+    def check_down(self, target):
+        if self.head_y == self.dis: return 0
+        for i in range(self.head_y + 1, self.row):
+            if self.board[i, self.head_x] == target:
+                return i
+        return 0
+
+    def check_right(self, target):
+        if self.head_x == self.dis: return 0
+        for i in range(self.head_x + 1, self.row):
+            if self.board[self.head_y, i] == target:
+                return i
+        return 0
+
+    def check_left(self, target):
+        if self.head_x == 0: return 0
+        for i in range(self.head_x - 1, -1, -1):
+            if self.board[self.head_y, i] == target:
+                return i
+        return 0
+
+    def check_right_up(self, target):
+        distance = self.dis_y_up if self.dis_y_up < self.dis_x_right else self.dis_x_right
+        if distance == 0: return 0
+        for n in range(1, distance + 1):
+            if self.board[self.head_y - n, self.head_x + n] == target:
+                return n
+        return 0
+
+    def check_right_down(self, target):
+        distance = self.dis_y_down if self.dis_y_down < self.dis_x_right else self.dis_x_right
+        if distance == 0: return 0
+        for n in range(1, distance + 1):
+            if self.board[self.head_y + n, self.head_x + n] == target:
+                return n
+        return 0
+
+    def check_left_up(self, target):
+        distance = self.dis_y_up if self.dis_y_up < self.dis_x_left else self.dis_x_left
+        if distance == 0: return 0
+        for n in range(1, distance + 1):
+            if self.board[self.head_y - n, self.head_x - n] == target:
+                return n
+        return 0
+
+    def check_left_down(self, target):
+        distance = self.dis_y_down if self.dis_y_down < self.dis_x_left else self.dis_x_left
+        if distance == 0: return 0
+        for n in range(1, distance + 1):
+            if self.board[self.head_y + n, self.head_x - n] == target:
+                return n
+        return 0
+
+    def all_eight_directions(self, target):
+        results = []
+        for val in [
+            self.check_up(target),
+            self.check_right_up(target),
+            self.check_right(target),
+            self.check_right_down(target),
+            self.check_down(target),
+            self.check_left_down(target),
+            self.check_left(target),
+            self.check_left_up(target),
+        ]:
+            results.append(max(0, min(self.row - 1, val)))
+        return np.array(results)
+
+    def distance_to_walls(self):
+        return np.round(
+            np.array([self.dis_y_up, self.dis_x_right, self.dis_y_down, self.dis_x_left]) / self.dis, 1
+        )
+
+    def get_head_direction(self, head_dir):
+        if head_dir is None:
+            return np.array([0, 0, 0, 0])
+        if np.array_equal(head_dir, self.moves["up"]):    return np.array([1, 0, 0, 0])
+        if np.array_equal(head_dir, self.moves["right"]): return np.array([0, 1, 0, 0])
+        if np.array_equal(head_dir, self.moves["down"]):  return np.array([0, 0, 1, 0])
+        if np.array_equal(head_dir, self.moves["left"]):  return np.array([0, 0, 0, 1])
+        return np.array([0, 0, 0, 0])
+
+    def get_tail_direction(self, snake_body):
+        """snake_body: numpy array of shape (N, 2) in (y, x) order"""
+        if len(snake_body) > 1:
+            tail_dir = tuple(
+                (np.array(snake_body[1]) - np.array(snake_body[0])).tolist()
+            )
+            moves = self.moves
+            if np.array_equal(tail_dir, moves["up"]):    return np.array([1, 0, 0, 0])
+            if np.array_equal(tail_dir, moves["right"]): return np.array([0, 1, 0, 0])
+            if np.array_equal(tail_dir, moves["down"]):  return np.array([0, 0, 1, 0])
+            if np.array_equal(tail_dir, moves["left"]):  return np.array([0, 0, 0, 1])
+        return np.array([0, 0, 0, 0])
+</file>
+
+<file path="game/snake.py">
+"""
+Core Python logic for the AI Snake game on a 16x16 grid.
+"""
+
+import enum
+import random
+from collections import namedtuple
+import numpy as np
+
+class Direction(enum.Enum):
+    RIGHT = 1
+    LEFT = 2
+    UP = 3
+    DOWN = 4
+
+Point = namedtuple('Point', 'x, y')
+
+GRID_SIZE = 16
+BLOCK_SIZE = 1
+
+class SnakeGame:
+    def __init__(self):
+        self.GRID_SIZE = GRID_SIZE
+        self.w = GRID_SIZE   # used by state.py for grid_size calculation
+        self.reset()
+        
+    def reset(self):
+        """Reset the game state to start a new game."""
+        self.direction = Direction.RIGHT
+        
+        # Start in the middle
+        self.head = Point(GRID_SIZE // 2, GRID_SIZE // 2)
+        self.snake = [
+            self.head,
+            Point(self.head.x - BLOCK_SIZE, self.head.y),
+            Point(self.head.x - (2 * BLOCK_SIZE), self.head.y)
+        ]
+        
+        self.score = 0
+        self.food = None
+        self.place_food()
+        self.frame_iteration = 0
+        
+    def place_food(self):
+        """Places food in a random unoccupied cell."""
+        empty_spots = []
+        for x in range(GRID_SIZE):
+            for y in range(GRID_SIZE):
+                pt = Point(x, y)
+                if pt not in self.snake:
+                    empty_spots.append(pt)
+        
+        if empty_spots:
+            self.food = random.choice(empty_spots)
+        else:
+            self.food = self.head  # Grid full
+            
+    def play_step(self, action):
+        """
+        Takes an action and plays one game step.
+        action: list or array of 3 ints [straight, right, left]
+        Returns: (reward, game_over, score)
+        Rewards: +10 eat, -10 die, +1 closer to food, -1 farther
+        """
+        self.frame_iteration += 1
+        
+        pass  # no distance tracking needed
+        
+        # 1. move -> update head
+        self._move(action)
+        self.snake.insert(0, self.head)
+        
+        # 2. check game over
+        reward = 0
+        game_over = False
+        
+        # Timeout if we loop too long without eating
+        if self.is_collision() or self.frame_iteration > 100 * len(self.snake):
+            game_over = True
+            reward = -10
+            return reward, game_over, self.score
+            
+        # 3. eat food or remove tail
+        if self.head == self.food:
+            self.score += 1
+            reward = 10
+            self.place_food()
+        else:
+            self.snake.pop()
+            reward = 0
+                
+        return reward, game_over, self.score
+        
+    def is_collision(self, pt=None):
+        """Checks if pt hits boundary or snake body. Defaults to head."""
+        if pt is None:
+            pt = self.head
+            
+        # boundary collision
+        if pt.x < 0 or pt.x >= GRID_SIZE or pt.y < 0 or pt.y >= GRID_SIZE:
+            return True
+            
+        # self collision
+        if pt in self.snake[1:]:
+            return True
+            
+        return False
+        
+    def _move(self, action):
+        """Moves head based on [straight, right_turn, left_turn] array."""
+        # [straight, right, left]
+        clock_wise = [Direction.RIGHT, Direction.DOWN, Direction.LEFT, Direction.UP]
+        idx = clock_wise.index(self.direction)
+        
+        if np.array_equal(action, [1, 0, 0]):
+            new_dir = clock_wise[idx] # no change
+        elif np.array_equal(action, [0, 1, 0]):
+            new_idx = (idx + 1) % 4
+            new_dir = clock_wise[new_idx] # right turn
+        else: # [0, 0, 1]
+            new_idx = (idx - 1) % 4
+            new_dir = clock_wise[new_idx] # left turn
+            
+        self.direction = new_dir
+        
+        x = self.head.x
+        y = self.head.y
+        if self.direction == Direction.RIGHT:
+            x += BLOCK_SIZE
+        elif self.direction == Direction.LEFT:
+            x -= BLOCK_SIZE
+        elif self.direction == Direction.DOWN:
+            y += BLOCK_SIZE
+        elif self.direction == Direction.UP:
+            y -= BLOCK_SIZE
+            
+        self.head = Point(x, y)
+</file>
+
+<file path="game/state.py">
+"""
+State vector builder — 28 inputs (SnakeQ architecture, MIT License)
+[0-3]   wall distances 4 directions      (float 0-1)
+[4-11]  food visible in 8 directions     (bool 0/1)
+[12-19] body distance in 8 directions    (float, normalised)
+[20-23] head direction                   (one-hot 4)
+[24-27] tail direction                   (one-hot 4)
+"""
+import numpy as np
+from game.snake_sensors import SnakeSensors
+
+INPUT_SIZE = 28
+
+MOVES_DIR = {
+    "up":    np.array([-1,  0]),
+    "right": np.array([ 0,  1]),
+    "down":  np.array([ 1,  0]),
+    "left":  np.array([ 0, -1]),
+}
+
+_sensors = None
+
+def _get_sensors(grid_size):
+    global _sensors
+    if _sensors is None:
+        _sensors = SnakeSensors(grid_size, MOVES_DIR)
+    return _sensors
+
+
+def build_state_simple(game) -> np.ndarray:
+    """
+    EXACT patrickloeber/snake-ai-pytorch get_state.
+    11 binary inputs. Proven to score 10-15 in 50 games.
+    Uses game.is_collision() exactly as original.
+    """
+    from game.snake import Point, Direction
+    head = game.snake[0]
+
+    point_l = Point(head.x - 1, head.y)
+    point_r = Point(head.x + 1, head.y)
+    point_u = Point(head.x, head.y - 1)
+    point_d = Point(head.x, head.y + 1)
+
+    dir_l = game.direction == Direction.LEFT
+    dir_r = game.direction == Direction.RIGHT
+    dir_u = game.direction == Direction.UP
+    dir_d = game.direction == Direction.DOWN
+
+    state = [
+        # Danger straight
+        (dir_r and game.is_collision(point_r)) or
+        (dir_l and game.is_collision(point_l)) or
+        (dir_u and game.is_collision(point_u)) or
+        (dir_d and game.is_collision(point_d)),
+
+        # Danger right
+        (dir_u and game.is_collision(point_r)) or
+        (dir_d and game.is_collision(point_l)) or
+        (dir_l and game.is_collision(point_u)) or
+        (dir_r and game.is_collision(point_d)),
+
+        # Danger left
+        (dir_d and game.is_collision(point_r)) or
+        (dir_u and game.is_collision(point_l)) or
+        (dir_r and game.is_collision(point_u)) or
+        (dir_l and game.is_collision(point_d)),
+
+        dir_l, dir_r, dir_u, dir_d,
+
+        game.food.x < head.x,
+        game.food.x > head.x,
+        game.food.y < head.y,
+        game.food.y > head.y,
+    ]
+    return np.array(state, dtype=int).astype(np.float32)
+
+def build_state(game, extended=False) -> np.ndarray:
+    if not extended:
+        return build_state_simple(game)
+
+    """
+    Convert game object into a 28-element float32 numpy array.
+
+    Expects game to have:
+      game.snake   : list of Point(x, y) namedtuples, index 0 = head
+      game.food    : Point(x, y)
+      game.direction: Direction enum (Direction.UP/DOWN/LEFT/RIGHT)
+      game.w, game.h: grid width/height in pixels
+      BLOCK_SIZE   : imported from game.snake
+    """
+    from game.snake import BLOCK_SIZE, Direction
+
+    # Safe assumption for 16x16 grid
+    if hasattr(game, 'w'):
+        grid_size = game.w // BLOCK_SIZE
+    else:
+        grid_size = 16
+
+    sensors = _get_sensors(grid_size)
+
+    board = np.zeros((grid_size, grid_size), dtype=np.float32)
+
+    for pt in game.snake:
+        col = int(pt.x) % grid_size
+        row = int(pt.y) % grid_size
+        col = max(0, min(grid_size - 1, col))
+        row = max(0, min(grid_size - 1, row))
+        board[row, col] = 1.0
+
+    food_col = max(0, min(grid_size - 1, int(game.food.x)))
+    food_row = max(0, min(grid_size - 1, int(game.food.y)))
+    board[food_row, food_col] = 2.0
+
+    head_col = max(0, min(grid_size - 1, int(game.snake[0].x)))
+    head_row = max(0, min(grid_size - 1, int(game.snake[0].y)))
+
+    sensors.update_sensor_board(board, (head_row, head_col))
+
+    # --- Wall distances (4) ---
+    wall_dist = sensors.distance_to_walls()
+
+    # --- Food in 8 directions (8) ---
+    see_food = sensors.all_eight_directions(2.0)
+    see_food = np.where(see_food > 0, 1.0, 0.0)   # convert to bool
+
+    # --- Body distance in 8 directions (8) ---
+    see_body = sensors.all_eight_directions(1.0)
+    see_body = (see_body / (grid_size - 1)) * -1   # normalise + negate like SnakeQ
+
+    # --- Head direction (4) ---
+    dir_map = {
+        Direction.UP:    MOVES_DIR["up"],
+        Direction.DOWN:  MOVES_DIR["down"],
+        Direction.LEFT:  MOVES_DIR["left"],
+        Direction.RIGHT: MOVES_DIR["right"],
+    }
+    head_dir_vec = dir_map.get(game.direction, None)
+    head_dir = sensors.get_head_direction(head_dir_vec)
+
+    # --- Tail direction (4) ---
+    snake_yx = np.array([
+        [int(pt.y // BLOCK_SIZE), int(pt.x // BLOCK_SIZE)]
+        for pt in reversed(game.snake)
+    ])
+    tail_dir = sensors.get_tail_direction(snake_yx)
+
+    state = np.concatenate([wall_dist, see_food, see_body, head_dir, tail_dir])
+    return state.astype(np.float32)
+</file>
+
+<file path="model/metadata_ucs.json">
+{"algo": "ucs", "record": 5, "n_games": 1, "mean_score": 0.0, "timestamp": "2026-03-20 23:19:37"}
+</file>
+
+<file path="model/metadata_astar.json">
+{"algo": "astar", "record": 66, "n_games": 136, "mean_score": 17.68148148148148, "timestamp": "2026-03-21 01:32:08"}
+</file>
+
+<file path="main.py">
+import asyncio
+import json
+import os
+import glob
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.middleware.cors import CORSMiddleware
+from typing import Dict
+
+from game.snake import SnakeGame
+from game.state import build_state
+from agents.hybrid_agent import HybridAgent
+
+app = FastAPI()
+
+app.mount("/static",
+          StaticFiles(directory="frontend"),
+          name="static")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+SPEED_FPS = { "1": 5, "2": 10, "10": 50, "50": 200 }
+
+@app.get("/")
+async def get_index():
+    return FileResponse("frontend/index.html")
+
+@app.get("/model/status")
+async def get_model_status():
+    status = []
+    for file in glob.glob("model/metadata_*.json"):
+        with open(file, "r") as f:
+            try:
+                status.append(json.load(f))
+            except json.JSONDecodeError:
+                pass
+    return status
+
+@app.post("/model/reset/{algo}")
+async def reset_model(algo: str):
+    pth = f"model/model_{algo}.pth"
+    json_path = f"model/metadata_{algo}.json"
+    if os.path.exists(pth):
+        os.remove(pth)
+    if os.path.exists(json_path):
+        os.remove(json_path)
+    return {"status": "ok", "algo": algo}
+
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections = {}
+        
+    async def connect(self, ws: WebSocket, algo: str):
+        await ws.accept()
+        self.active_connections[algo] = ws
+        
+    def disconnect(self, algo: str):
+        if algo in self.active_connections:
+            del self.active_connections[algo]
+
+manager = ConnectionManager()
+
+async def game_loop(ws: WebSocket, algo: str, speed_ref: dict):
+    agent = HybridAgent(algo)
+    game = SnakeGame()
+    
+    while True:
+        try:
+            fps = SPEED_FPS[str(speed_ref.get("speed", 10))]
+            delay = 1.0 / fps
+            
+            state_old = build_state(game, extended=True)
+            
+            final_move, explored, path, algo_stat = agent.get_action(game, state_old)
+            
+            reward, done, score = game.play_step(final_move)
+            state_new = build_state(game, extended=True)
+            
+            agent.train_short_memory(state_old, final_move, reward, state_new, done)
+            agent.remember(state_old, final_move, reward, state_new, done)
+            
+            msg = {
+                "type": "step",
+                "algo": algo,
+                "snake": [[pt.x, pt.y] for pt in game.snake],
+                "food": [game.food.x, game.food.y],
+                "score": score,
+                "game_no": agent.n_games,
+                "record": agent.record,
+                "mean_score": round(agent.mean_score, 2),
+                "epsilon": round(agent.epsilon, 3),
+                "explored": explored,
+                "path": path,
+                "algo_stat": algo_stat,
+                "done": done
+            }
+            
+            await ws.send_json(msg)
+            
+            if done:
+                game.reset()
+                agent.n_games += 1
+                try:
+                    agent.rl.lifetime_games += 1
+                except AttributeError:
+                    pass
+                agent.train_long_memory()
+                
+                if score > agent.record:
+                    agent.record = score
+                    agent.save()
+                    
+                agent.total_score += score
+                agent.mean_score = agent.total_score / agent.n_games
+            
+            await asyncio.sleep(delay)
+            
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            import traceback
+            print(f"Game loop error (recovering): {e}")
+            traceback.print_exc()
+            try:
+                game.reset()
+            except Exception:
+                game = SnakeGame()
+            continue
+
+@app.websocket("/ws/{algo}")
+async def websocket_endpoint(websocket: WebSocket, algo: str):
+    await manager.connect(websocket, algo)
+    speed_ref = {"speed": 10}
+    loop_task = None
+    
+    try:
+        while True:
+            data = await websocket.receive_json()
+            msg_type = data.get("type")
+            
+            if msg_type == "start":
+                if loop_task is not None and not loop_task.done():
+                    loop_task.cancel()
+                speed_ref["speed"] = data.get("speed", 10)
+                loop_task = asyncio.create_task(game_loop(websocket, algo, speed_ref))
+                
+            elif msg_type == "stop":
+                if loop_task is not None:
+                    loop_task.cancel()
+                    loop_task = None
+                    
+            elif msg_type == "set_speed":
+                speed_ref["speed"] = data.get("speed", 10)
+                
+    except WebSocketDisconnect:
+        manager.disconnect(algo)
+        if loop_task is not None:
+            loop_task.cancel()
+</file>
+
 <file path="task.md">
 # task.md — AI Snake Arena
 
@@ -3115,7 +3361,7 @@ Mark M1-03 as:
 | ID | Title | Description | Tag | Depends On | Status | Note |
 |----|-------|-------------|-----|------------|--------|------|
 | M3-01 | HTML skeleton | Create frontend/index.html: dark base styles, CSS variables for all 7 accent colors, font imports, hero section, nav strip, 7 algo-section divs with correct IDs and data-algo attributes. | [frontend] | M1-01 | ✅ | Implemented single file index.html with theme CSS variables |
-| M3-02 | Hero section | Build hero: full-width dark section, animated snake canvas background (snake crawls across grid using JS setInterval), title "AI Snake Arena", subtitle, tech chips (PyTorch, DQN, 27-input, FastAPI, WebSocket, BFS, A*, Minimax), scroll CTA arrow. | [frontend] | M3-01 | ✅ | Added Hero section with procedural animated snake crawling background |
+| M3-02 | Hero section | Build hero: full-width dark section, animated snake canvas background (snake crawls across grid using JS setInterval), title "AI Snake Arena", subtitle, tech chips (PyTorch, DQN, 27-input, FastAPI, WebSocket, BFS, A*, Minimax), scroll CTA arrow. | [frontend] | M3-01 | ✅ | "Hero rebuilt: video bg + GSAP scroll-pinned text reveal, 6-line sequence, scroll unlock to algo sections" |
 | M3-03 | Nav strip | Sticky nav below hero: 7 pill buttons (Pure DQN, DQN+BFS, etc.). Click scrolls to section. Active pill highlights as user scrolls (IntersectionObserver). | [frontend] | M3-01 | ✅ | Added sticky Nav strip and IntersectionObserver for highlight |
 | M3-04 | Algo section layout | Each of 7 sections: section header (colored dot + algo name + tag badge + description), 50/50 split layout (left=chart panel, right=snake panel). All 7 sections share same CSS classes, differentiated by accent color CSS variable. | [frontend] | M3-01 | ✅ | Generated 7 sections locally styled correctly |
 | M3-05 | Snake canvas renderer | JS function renderFrame(ctx, frameData, accentColor): draws grid lines, explored cells (dim accent overlay), path cells (brighter overlay), snake body (head distinct, body fading opacity), food (circle). Called on every step message. | [frontend] | M3-04 | ✅ | Implemented `renderFrame()` executing all 7 distinct layer drawings |
