@@ -907,11 +907,14 @@ body.scroll-locked {
         if (wsConnections[algoId]) wsConnections[algoId].setSpeed(speed);
     };
 
-    // --- Init: Render blank boards, setup observers ---
+    // --- Init: Render blank boards, setup observers, and reset backend ---
     ALGOS.forEach(algo => {
         initChart(algo.id, ACCENTS[algo.id]);
         const ctx = document.getElementById(`canvas-${algo.id}`).getContext('2d');
         renderFrame(ctx, {}, ACCENTS[algo.id]);
+        
+        // Wipe saved backend data so stats start at 0 on every refresh
+        fetch(`/model/reset/${algo.id}`, { method: 'POST' }).catch(err => console.error('Reset failed:', err));
     });
 
 
