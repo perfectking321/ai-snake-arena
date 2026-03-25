@@ -63,23 +63,25 @@ class SnakeGame:
         Rewards: +10 eat, -10 die, +1 closer to food, -1 farther
         """
         self.frame_iteration += 1
-        
-        pass  # no distance tracking needed
-        
+
+        # Calculate distance to food BEFORE move
+        old_head = self.head
+        distance_before = abs(old_head.x - self.food.x) + abs(old_head.y - self.food.y)
+
         # 1. move -> update head
         self._move(action)
         self.snake.insert(0, self.head)
-        
+
         # 2. check game over
         reward = 0
         game_over = False
-        
+
         # Timeout if we loop too long without eating
         if self.is_collision() or self.frame_iteration > 100 * len(self.snake):
             game_over = True
             reward = -10
             return reward, game_over, self.score
-            
+
         # 3. eat food or remove tail
         if self.head == self.food:
             self.score += 1
@@ -87,8 +89,13 @@ class SnakeGame:
             self.place_food()
         else:
             self.snake.pop()
-            reward = 0
-                
+            # Distance-based reward - encourage moving towards food
+            distance_after = abs(self.head.x - self.food.x) + abs(self.head.y - self.food.y)
+            if distance_after < distance_before:
+                reward = 1  # Moved closer to food
+            else:
+                reward = -1  # Moved away from food
+
         return reward, game_over, self.score
         
     def is_collision(self, pt=None):

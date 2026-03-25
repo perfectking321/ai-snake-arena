@@ -50,6 +50,10 @@ agents/
   minimax.py
   rl_agent.py
   ucs.py
+assets/
+  2026-03-21_23-15-31.png
+  2026-03-21_23-15-41.png
+  2026-03-21_23-17-18.png
 frontend/
   index.html
   snake_loop.mp4
@@ -59,10 +63,7 @@ game/
   snake.py
   state.py
 model/
-  metadata_astar.json
-  metadata_bestfirst.json
-  metadata_minimax.json
-  metadata_ucs.json
+  metadata_dqn.json
 .gitignore
 agents.md
 git
@@ -563,10 +564,6 @@ def solve(snake, food, grid_size):
 
 </file>
 
-<file path="model/metadata_minimax.json">
-{"algo": "minimax", "record": 1, "n_games": 3, "mean_score": 0.0, "timestamp": "2026-03-21 13:33:40"}
-</file>
-
 <file path=".gitignore">
 # Python
 __pycache__/
@@ -589,288 +586,11 @@ Thumbs.db
 # IDE
 .vscode/
 .idea/
-</file>
-
-<file path="agents.md">
-# agents.md — AI Snake Arena
-## Global rules for every Antigravity agent
-
----
-
-## Coding Rules
-
-### Language and framework
-- Python 3.11. FastAPI + uvicorn. PyTorch (CPU is fine, no CUDA required).
-- Vanilla HTML/CSS/JS for frontend. No React, no Vue, no build step.
-- Chart.js loaded from CDN: `https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js`
-
-### Style conventions
-- Python: snake_case for variables and functions, PascalCase for classes.
-- JS: camelCase for variables and functions, PascalCase for classes.
-- 4-space indentation in Python, 2-space in JS/HTML/CSS.
-- All Python files must have a module docstring at the top.
-- No commented-out code in final output.
-- No print statements left in production paths — use them only in training loop console output.
-
-### Patterns to use
-- FastAPI `async def` for all WebSocket handlers and endpoints.
-- `asyncio.sleep()` for game loop timing — never `time.sleep()` inside async context.
-- `collections.deque` for replay buffer.
-- `numpy` arrays for state vectors — never plain Python lists passed to torch.
-- Each algo solver must be a pure function — no side effects, no global state.
-- Solver signature: `solve(snake: list, food: tuple, grid_size: int) → dict`
-- Solver return dict always contains: `action`, `explored`, `path`, `algo_stat`
-
-### What to NEVER do
-- Never use `time.sleep()` inside an async function.
-- Never hardcode grid size — always read from `GRID_SIZE` constant in snake.py.
-- Never import from a sibling agent file (bfs.py must not import from astar.py).
-- Never write to model/ directory from frontend code.
-- Never use `plt.show()` or matplotlib in the backend — charts are frontend only.
-- Never commit .pth files — they are gitignored.
-- Never put game logic in main.py — it belongs in game/.
-- Never put algo logic in main.py — it belongs in agents/.
-- Never use `import *`.
-
-### Folder ownership (STRICT)
-Each agent owns exactly one folder. Do not create, edit, or delete files outside your folder.
-
-| Agent | Owns |
-|---|---|
-| Backend Agent | `/game/`, `/agents/`, `main.py`, `requirements.txt` |
-| Frontend Agent | `/frontend/` |
-
-`/model/` is written to at runtime by the backend — neither agent touches it directly.
-
----
-
-## Verification Rules
-
-- After implementing any WebSocket endpoint, test it with a simple Python `websockets` client script before marking done.
-- After implementing any solver, add a quick `if __name__ == "__main__"` test at the bottom that runs the solver on a sample board and prints the result. Remove before final commit.
-- Frontend agent: after any canvas or chart change, verify in browser that rendering is correct. Attach a screenshot as proof.
-- Frontend agent: verify Play/Stop cycle works at least 3 times without WS leak or chart duplication.
-
----
-
-## task.md Maintenance Rules (CRITICAL)
-
-- Before starting any work: read task.md fully. Understand what is done, what is blocked, what you own.
-- After completing each task: immediately update task.md.
-  - Change status from 🔲 to ✅
-  - Add a one-line note in the Note column describing exactly what was done.
-  - Example: `✅ | "Implemented BFS solver, returns action + explored + path dict"`
-- Never mark a task ✅ without actually completing and verifying it.
-- If a task is blocked: mark 🚫 and note the blocker reason.
-- If a task is in progress: mark 🔄
-- At end of every session: update ALL in-progress tasks honestly (🔄 for incomplete, ✅ for done).
-- Never skip updating task.md — it is the handoff contract between agents and sessions.
-
----
-
-## Project-Specific Constants
-
-```python
-GRID_SIZE = 16
-BLOCK_SIZE = 1          # logical units (not pixels — canvas handles px)
-MAX_MEMORY = 100_000
-BATCH_SIZE = 1_000
-LR = 0.001
-GAMMA = 0.9
-EPSILON_START = 1.0
-EPSILON_MIN = 0.01
-EPSILON_DECAY_GAMES = 80
-HIDDEN_SIZE = 256
-
-VALID_ALGOS = ["dqn", "bfs", "dfs", "ucs", "astar", "bestfirst", "minimax"]
-
-SPEED_FPS = { "1": 5, "2": 10, "10": 50, "50": 200 }
-```
-
----
-
-## WebSocket Contract (backend must match exactly)
-
-Step message shape — backend sends this every game step:
-```json
-{
-  "type": "step",
-  "algo": "string",
-  "snake": [[x,y], ...],
-  "food": [x, y],
-  "score": int,
-  "game_no": int,
-  "record": int,
-  "mean_score": float,
-  "epsilon": float,
-  "explored": [[x,y], ...],
-  "path": [[x,y], ...],
-  "algo_stat": { "label": "string", "value": number },
-  "done": bool
-}
-```
-
-Client sends these shapes — backend must handle all three:
-```json
-{ "type": "start", "algo": "string", "speed": int }
-{ "type": "stop" }
-{ "type": "set_speed", "speed": int }
-```
-
-When `done: true` — backend resets game and starts next game automatically. Client does NOT need to send another start.
-
----
-
-## Accent Color Map (frontend must use exactly these)
-
-```css
---color-dqn:       #7c6ef7;
---color-bfs:       #3b9eff;
---color-dfs:       #ff7043;
---color-ucs:       #26c6a0;
---color-astar:     #ffd740;
---color-bestfirst: #e040fb;
---color-minimax:   #ff4081;
-```
-
-These are used for: section dot, tag badge, Play button, chart line, explored cell overlay, path overlay, stat card accent value.
-
----
-
-## Canvas Rendering Layers (frontend draw order — must be exact)
-
-1. Fill background `#0a0a0c`
-2. Draw grid lines (0.5px, `#111118`)
-3. Draw explored cells (accent color at 12% opacity)
-4. Draw path cells (accent color at 25% opacity)
-5. Draw snake body (index 1+): accent color at decreasing opacity (1.0 → 0.4)
-6. Draw snake head (index 0): full accent color + 2 white eye dots
-7. Draw food: red circle (`#ff4444`) with small highlight dot
-
----
-
-## Definition of Done Checklist (agent self-check before marking ✅)
-
-Backend tasks:
-- [ ] Function runs without exceptions on a fresh game state
-- [ ] Returns correct types (check against spec.md data models)
-- [ ] No blocking calls inside async functions
-
-Frontend tasks:
-- [ ] Renders correctly in Chromium browser
-- [ ] No JS console errors
-- [ ] Screenshot attached as proof of visual work
+.aider*
 </file>
 
 <file path="git">
 
-</file>
-
-<file path="README.md">
-# AI Snake Arena
-
-A Snake game where AI algorithms learn to play by themselves.
-Watch the agent go from dying in 2 moves to scoring 30+ over 100 games.
-
-Built for FT3 Application Development — SRMIST 2026.
-
----
-
-## How It Works
-
-A Deep Q-Network (DQN) agent observes the game through 28 sensor inputs and decides whether to go straight, turn left, or turn right. It learns purely from trial and error — no rules, no hardcoded logic.
-
-Each section of the app pairs the DQN with a different classical search algorithm. The algorithm finds a path to food, the DQN decides whether to follow it or override it based on safety. This shows how the same RL agent behaves differently depending on the guidance it receives.
-
----
-
-## Algorithms
-
-| Algorithm | Type | How It Guides the Snake | Expected Score (100 games) |
-|---|---|---|---|
-| Pure DQN | Reinforcement Learning | Learns entirely from rewards and penalties | 15 – 30 |
-| DQN + BFS | Informed Search | Shortest path to food, explores level by level | 25 – 45 |
-| DQN + DFS | Uninformed Search | Dives deep before backtracking, finds non-optimal paths | 20 – 35 |
-| DQN + UCS | Uninformed Search | Optimal path by cumulative cost (uniform grid = same as BFS) | 25 – 45 |
-| DQN + A* | Informed Search | Optimal path using Manhattan distance heuristic | 35 – 60 |
-| DQN + Best-First | Informed Search | Greedy — goes straight toward food, can get trapped | 20 – 40 |
-| DQN + Minimax | Adversarial Search | Treats board as a game vs a phantom blocker, alpha-beta pruning | 30 – 50 |
-
----
-
-## State Vector — 28 Inputs
-
-The agent sees the world through 28 numbers:
-
-```
-[0–3]   Distance to wall in 4 directions        (float 0–1)
-[4–11]  Food visible in 8 directions            (bool 0/1)
-[12–19] Distance to own body in 8 directions    (float 0–1)
-[20–23] Current head direction                  (one-hot)
-[24–27] Current tail direction                  (one-hot)
-```
-
-Sensor logic adapted from SnakeQ by ludius0 (MIT License).
-
----
-
-## Tech Stack
-
-- **Backend** — Python 3.11, FastAPI, WebSocket
-- **AI/ML** — PyTorch (DQN, Linear Q-Network)
-- **Frontend** — Vanilla HTML/CSS/JS, Chart.js, Canvas API
-- **Persistence** — `.pth` model weights + JSON metadata
-
----
-
-## Run Locally
-
-```bash
-git clone https://github.com/YOUR_USERNAME/ai-snake-arena
-cd ai-snake-arena
-
-python -m venv venv
-source venv/bin/activate
-
-pip install fastapi uvicorn websockets numpy
-pip install torch --index-url https://download.pytorch.org/whl/cpu
-
-python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-```
-
-Open `http://localhost:8000` in your browser.
-
-Click **Play** on any section. The agent starts dumb and gets smarter each game.
-Use **50x Speed** to train fast, then drop to **1x** to watch it play properly.
-
----
-
-## Project Structure
-
-```
-ai-snake-arena/
-├── main.py               FastAPI app + WebSocket game loop
-├── game/
-│   ├── snake.py          16×16 grid, snake logic, collision
-│   ├── state.py          28-input state vector builder
-│   └── snake_sensors.py  8-direction vision rays
-├── agents/
-│   ├── rl_agent.py       DQN agent, Q-network, replay buffer
-│   ├── hybrid_agent.py   DQN + algorithm arbitration
-│   ├── bfs.py            Breadth-First Search solver
-│   ├── dfs.py            Depth-First Search solver
-│   ├── ucs.py            Uniform Cost Search solver
-│   ├── astar.py          A* Search solver
-│   ├── best_first.py     Greedy Best-First solver
-│   └── minimax.py        Minimax with alpha-beta pruning
-├── model/                Saved weights + training metadata
-└── frontend/
-    └── index.html        Single-file web UI
-```
-
----
-
-Made by Iyad — SRMIST B.Tech CSE (AI & ML) 2028
 </file>
 
 <file path="requirements.txt">
@@ -899,232 +619,6 @@ python -c "import agents.rl_agent; print('rl_agent OK')"
 python -c "import main; print('main OK')"
 echo "--- 5. Starting server ---"
 python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
-</file>
-
-<file path="spec.md">
-# spec.md — AI Snake Arena
-
-## Project Overview
-
-A web application demonstrating Reinforcement Learning and Classical AI algorithms through a live Snake game. A Deep Q-Network agent learns to play Snake in real time — the user watches it fail, improve, and eventually master the game. Below the hero, 6 additional sections each show a hybrid agent (DQN + one classical algorithm): BFS, DFS, UCS, A*, Best-First Search, and Minimax with Alpha-Beta Pruning. Each section is visually independent with its own live score graph and snake grid.
-
-**Problem statement:** Make AI/ML algorithms tangible and visual for an academic review — not theory, but a running demo where behavioral differences between algorithms are directly observable.
-
----
-
-## Tech Stack
-
-| Layer | Choice | Justification |
-|---|---|---|
-| Backend | Python 3.11 + FastAPI | Course requirement, async, WebSocket native |
-| ML | PyTorch | DQN, Linear_QNet, model save/load |
-| Realtime | WebSocket (FastAPI) | Streams game state at game speed |
-| Frontend | Vanilla HTML + CSS + JS | Zero build step, single file, runs anywhere |
-| Canvas | HTML5 Canvas API | Smooth 2D grid rendering |
-| Charts | Chart.js via CDN | Live score vs games line chart |
-| Persistence | .pth + metadata JSON | Survives server restarts |
-
----
-
-## Folder Structure
-
-```
-ai-snake-arena/
-├── main.py
-├── game/
-│   ├── __init__.py
-│   ├── snake.py               # Grid, snake, food, collision, reset
-│   └── state.py               # 27-input state vector builder
-├── agents/
-│   ├── __init__.py
-│   ├── rl_agent.py            # Pure DQN: Q-network, epsilon-greedy, replay buffer
-│   ├── bfs.py                 # BFS solver → next action + explored cells
-│   ├── dfs.py                 # DFS solver → next action + explored cells
-│   ├── ucs.py                 # UCS solver → next action + path cost
-│   ├── astar.py               # A* solver (f=g+h) → next action + path
-│   ├── best_first.py          # Greedy Best-First → next action
-│   ├── minimax.py             # Minimax + alpha-beta pruning → next action
-│   └── hybrid_agent.py        # DQN + any solver, arbitration logic
-├── model/
-│   ├── model_dqn.pth
-│   ├── model_bfs.pth
-│   ├── model_dfs.pth
-│   ├── model_ucs.pth
-│   ├── model_astar.pth
-│   ├── model_bestfirst.pth
-│   ├── model_minimax.pth
-│   └── metadata_{algo}.json   # Per-algo: games, record, mean score
-├── frontend/
-│   └── index.html             # Single file: hero + 7 sections
-├── requirements.txt
-└── README.md
-```
-
----
-
-## Data Models
-
-### State vector — 27 inputs
-
-```
-[0-2]   danger straight, danger right, danger left          (bool → 0/1)
-[3-6]   direction LEFT, RIGHT, UP, DOWN                     (bool → 0/1)
-[7-10]  food left, food right, food up, food down           (bool → 0/1)
-[11-18] wall distance in 8 directions (N NE E SE S SW W NW) (float 0–1)
-[19-26] nearest body distance in 8 directions               (float 0–1, 1.0 = no body)
-```
-
-### Q-Network
-
-```
-Linear(27 → 256) → ReLU → Linear(256 → 256) → ReLU → Linear(256 → 3)
-Output actions: [go straight, turn right, turn left]
-```
-
-### WebSocket — server → client (each game step)
-
-```json
-{
-  "type": "step",
-  "algo": "bfs",
-  "snake": [[8,8],[7,8],[6,8]],
-  "food": [12,5],
-  "score": 3,
-  "game_no": 47,
-  "record": 31,
-  "mean_score": 8.4,
-  "epsilon": 0.33,
-  "explored": [[9,8],[10,8],[9,9]],
-  "path": [[9,8],[10,8],[11,8],[12,5]],
-  "algo_stat": { "label": "nodes", "value": 38 },
-  "done": false
-}
-```
-
-### WebSocket — client → server
-
-```json
-{ "type": "start", "algo": "dqn", "speed": 10 }
-{ "type": "stop" }
-{ "type": "set_speed", "speed": 50 }
-```
-
-### metadata_{algo}.json
-
-```json
-{ "algo": "bfs", "record": 42, "n_games": 23, "mean_score": 14.2, "timestamp": "2026-03-25 10:00:00" }
-```
-
----
-
-## API Contracts
-
-| Endpoint | Method | Description |
-|---|---|---|
-| `/` | GET | Serves frontend/index.html |
-| `/ws/{algo}` | WebSocket | Live game stream for given algo |
-| `/model/reset/{algo}` | POST | Deletes weights + resets metadata |
-| `/model/status` | GET | Returns all algo metadata |
-
-Valid algo values: `dqn`, `bfs`, `dfs`, `ucs`, `astar`, `bestfirst`, `minimax`
-
----
-
-## Algorithm Specs
-
-### Pure DQN
-- 27 inputs, hidden 256×2, 3 outputs
-- Memory: deque(100,000), batch: 1,000, LR: 0.001, gamma: 0.9
-- Epsilon: 1.0 → 0.01 over 80 games
-- algo_stat: `{ label: "epsilon", value: 0.33 }`
-
-### Hybrid arbitration (hybrid_agent.py)
-1. Run algo solver → get `path` and `explored`
-2. If valid path exists → follow algo's next step as primary action
-3. DQN evaluates same state → if DQN disagrees strongly, override
-4. DQN trains every step regardless (experience still collected)
-5. algo_stat varies per algo (see below)
-
-### Per-algo stat labels
-- BFS: `{ label: "nodes", value: N }` — cells explored
-- DFS: `{ label: "nodes", value: N }` — cells explored
-- UCS: `{ label: "cost", value: N }` — path cost
-- A*: `{ label: "path", value: N }` — path length
-- Best-First: `{ label: "h", value: N }` — heuristic at current head
-- Minimax: `{ label: "depth", value: N }` — search depth reached
-
-### Minimax
-- Snake = maximiser, phantom blocker agent = minimiser
-- Depth limit: 4 (keeps real-time performance)
-- Alpha-beta pruning enabled
-
----
-
-## Frontend Architecture
-
-`frontend/index.html` — single file, no build step.
-
-```
-hero section        animated snake canvas bg, title, chips, scroll CTA
-nav strip           sticky: Pure DQN | DQN+BFS | DQN+DFS | DQN+UCS | DQN+A* | DQN+Best-First | DQN+Minimax
-algo-section × 7    identical layout per section:
-  left panel        Chart.js: score line + running mean dashed line
-  right panel       canvas grid + Play/Stop + speed select + 4 stat cards
-```
-
-Per-section JS:
-- Play → open `/ws/{algo}`, send start message, render loop begins
-- Stop → send stop, close WS
-- Each `step` message → redraw canvas + Chart.js push + update stat cards
-- Speed select → send `set_speed`
-- Canvas layers: grid → explored cells (dim) → path (bright) → snake → food
-
-Accent colors:
-```
-dqn:       #7c6ef7  purple
-bfs:       #3b9eff  blue
-dfs:       #ff7043  orange
-ucs:       #26c6a0  teal
-astar:     #ffd740  amber
-bestfirst: #e040fb  magenta
-minimax:   #ff4081  pink-red
-```
-
----
-
-## Constraints
-
-- Grid: 16×16
-- Game loop runs server-side in Python
-- Speed: 1x=5fps, 2x=10fps, 10x=50fps, 50x=200fps
-- Each algo section has independent game loop and WS connection
-- Model saves only when new record is set
-- No database — .pth + .json only
-- Runs locally: `python main.py` → `localhost:8000`
-
----
-
-## Non-Goals (v1)
-
-- No auth, no user accounts
-- No CSP graph coloring (removed per user decision)
-- No cloud deployment
-- No CNN state (27-input flat vector only)
-- No mobile layout
-
----
-
-## Definition of Done
-
-- [ ] `python main.py` → browser opens, hero visible
-- [ ] All 7 sections render on scroll
-- [ ] Play/Stop works on every section independently
-- [ ] Score graph updates live as games run
-- [ ] Speed selector changes game pace
-- [ ] Pure DQN visibly improves over 50–100 games
-- [ ] Hybrid sections show explored cell overlay
-- [ ] Model persists across server restart
-- [ ] All 7 algorithms run without crashes
 </file>
 
 <file path="state_update_prompt.md">
@@ -1571,11 +1065,13 @@ class Linear_QNet(nn.Module):
     def __init__(self, input_size, hidden_size, output_size):
         super().__init__()
         self.linear1 = nn.Linear(input_size, hidden_size)
-        self.linear2 = nn.Linear(hidden_size, output_size)
+        self.linear2 = nn.Linear(hidden_size, hidden_size)
+        self.linear3 = nn.Linear(hidden_size, output_size)
 
     def forward(self, x):
         x = F.relu(self.linear1(x))
-        x = self.linear2(x)
+        x = F.relu(self.linear2(x))
+        x = self.linear3(x)
         return x
 
 
@@ -1622,8 +1118,8 @@ class Agent:
         self.epsilon = 0
         self.gamma = 0.9
         self.memory = deque(maxlen=MAX_MEMORY)
-        # EXACT patrickloeber architecture: 11→256→3 (2 layers)
-        self.model = Linear_QNet(28, 256, 3)
+        # EXACT patrickloeber architecture: 11→256→256→3 (2 hidden layers)
+        self.model = Linear_QNet(11, 256, 3)
         self.trainer = QTrainer(self.model, lr=LR, gamma=self.gamma)
 
         self.record = 0
@@ -1904,23 +1400,25 @@ class SnakeGame:
         Rewards: +10 eat, -10 die, +1 closer to food, -1 farther
         """
         self.frame_iteration += 1
-        
-        pass  # no distance tracking needed
-        
+
+        # Calculate distance to food BEFORE move
+        old_head = self.head
+        distance_before = abs(old_head.x - self.food.x) + abs(old_head.y - self.food.y)
+
         # 1. move -> update head
         self._move(action)
         self.snake.insert(0, self.head)
-        
+
         # 2. check game over
         reward = 0
         game_over = False
-        
+
         # Timeout if we loop too long without eating
         if self.is_collision() or self.frame_iteration > 100 * len(self.snake):
             game_over = True
             reward = -10
             return reward, game_over, self.score
-            
+
         # 3. eat food or remove tail
         if self.head == self.food:
             self.score += 1
@@ -1928,8 +1426,13 @@ class SnakeGame:
             self.place_food()
         else:
             self.snake.pop()
-            reward = 0
-                
+            # Distance-based reward - encourage moving towards food
+            distance_after = abs(self.head.x - self.food.x) + abs(self.head.y - self.food.y)
+            if distance_after < distance_before:
+                reward = 1  # Moved closer to food
+            else:
+                reward = -1  # Moved away from food
+
         return reward, game_over, self.score
         
     def is_collision(self, pt=None):
@@ -2129,16 +1632,518 @@ def build_state(game, extended=False) -> np.ndarray:
     return state.astype(np.float32)
 </file>
 
-<file path="model/metadata_astar.json">
-{"algo": "astar", "record": 66, "n_games": 136, "mean_score": 17.68148148148148, "timestamp": "2026-03-21 01:32:08"}
+<file path="model/metadata_dqn.json">
+{"algo": "dqn", "record": 30, "n_games": 81, "mean_score": 3.8375, "timestamp": "2026-03-26 01:35:36"}
 </file>
 
-<file path="model/metadata_bestfirst.json">
-{"algo": "bestfirst", "record": 33, "n_games": 4, "mean_score": 5.666666666666667, "timestamp": "2026-03-21 13:33:58"}
+<file path="agents.md">
+# agents.md — Deep Reinforcement Learning Snake Agent
+## Global rules for every Antigravity agent
+
+---
+
+## Coding Rules
+
+### Language and framework
+- Python 3.11. FastAPI + uvicorn. PyTorch (CPU is fine, no CUDA required).
+- Vanilla HTML/CSS/JS for frontend. No React, no Vue, no build step.
+- Chart.js loaded from CDN: `https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.0/chart.umd.min.js`
+
+### Style conventions
+- Python: snake_case for variables and functions, PascalCase for classes.
+- JS: camelCase for variables and functions, PascalCase for classes.
+- 4-space indentation in Python, 2-space in JS/HTML/CSS.
+- All Python files must have a module docstring at the top.
+- No commented-out code in final output.
+- No print statements left in production paths — use them only in training loop console output.
+
+### Patterns to use
+- FastAPI `async def` for all WebSocket handlers and endpoints.
+- `asyncio.sleep()` for game loop timing — never `time.sleep()` inside async context.
+- `collections.deque` for replay buffer.
+- `numpy` arrays for state vectors — never plain Python lists passed to torch.
+- Each algo solver must be a pure function — no side effects, no global state.
+- Solver signature: `solve(snake: list, food: tuple, grid_size: int) → dict`
+- Solver return dict always contains: `action`, `explored`, `path`, `algo_stat`
+
+### What to NEVER do
+- Never use `time.sleep()` inside an async function.
+- Never hardcode grid size — always read from `GRID_SIZE` constant in snake.py.
+- Never import from a sibling agent file (bfs.py must not import from astar.py).
+- Never write to model/ directory from frontend code.
+- Never use `plt.show()` or matplotlib in the backend — charts are frontend only.
+- Never commit .pth files — they are gitignored.
+- Never put game logic in main.py — it belongs in game/.
+- Never put algo logic in main.py — it belongs in agents/.
+- Never use `import *`.
+
+### Folder ownership (STRICT)
+Each agent owns exactly one folder. Do not create, edit, or delete files outside your folder.
+
+| Agent | Owns |
+|---|---|
+| Backend Agent | `/game/`, `/agents/`, `main.py`, `requirements.txt` |
+| Frontend Agent | `/frontend/` |
+
+`/model/` is written to at runtime by the backend — neither agent touches it directly.
+
+---
+
+## Verification Rules
+
+- After implementing any WebSocket endpoint, test it with a simple Python `websockets` client script before marking done.
+- After implementing any solver, add a quick `if __name__ == "__main__"` test at the bottom that runs the solver on a sample board and prints the result. Remove before final commit.
+- Frontend agent: after any canvas or chart change, verify in browser that rendering is correct. Attach a screenshot as proof.
+- Frontend agent: verify Play/Stop cycle works at least 3 times without WS leak or chart duplication.
+
+---
+
+## task.md Maintenance Rules (CRITICAL)
+
+- Before starting any work: read task.md fully. Understand what is done, what is blocked, what you own.
+- After completing each task: immediately update task.md.
+  - Change status from 🔲 to ✅
+  - Add a one-line note in the Note column describing exactly what was done.
+  - Example: `✅ | "Implemented BFS solver, returns action + explored + path dict"`
+- Never mark a task ✅ without actually completing and verifying it.
+- If a task is blocked: mark 🚫 and note the blocker reason.
+- If a task is in progress: mark 🔄
+- At end of every session: update ALL in-progress tasks honestly (🔄 for incomplete, ✅ for done).
+- Never skip updating task.md — it is the handoff contract between agents and sessions.
+
+---
+
+## Project-Specific Constants
+
+```python
+GRID_SIZE = 16
+BLOCK_SIZE = 1          # logical units (not pixels — canvas handles px)
+MAX_MEMORY = 100_000
+BATCH_SIZE = 1_000
+LR = 0.001
+GAMMA = 0.9
+EPSILON_START = 1.0
+EPSILON_MIN = 0.01
+EPSILON_DECAY_GAMES = 80
+HIDDEN_SIZE = 256
+
+VALID_ALGOS = ["dqn", "bfs", "dfs", "ucs", "astar", "bestfirst", "minimax"]
+
+SPEED_FPS = { "1": 5, "2": 10, "10": 50, "50": 200 }
+```
+
+---
+
+## WebSocket Contract (backend must match exactly)
+
+Step message shape — backend sends this every game step:
+```json
+{
+  "type": "step",
+  "algo": "string",
+  "snake": [[x,y], ...],
+  "food": [x, y],
+  "score": int,
+  "game_no": int,
+  "record": int,
+  "mean_score": float,
+  "epsilon": float,
+  "explored": [[x,y], ...],
+  "path": [[x,y], ...],
+  "algo_stat": { "label": "string", "value": number },
+  "done": bool
+}
+```
+
+Client sends these shapes — backend must handle all three:
+```json
+{ "type": "start", "algo": "string", "speed": int }
+{ "type": "stop" }
+{ "type": "set_speed", "speed": int }
+```
+
+When `done: true` — backend resets game and starts next game automatically. Client does NOT need to send another start.
+
+---
+
+## Accent Color Map (frontend must use exactly these)
+
+```css
+--color-dqn:       #7c6ef7;
+--color-bfs:       #3b9eff;
+--color-dfs:       #ff7043;
+--color-ucs:       #26c6a0;
+--color-astar:     #ffd740;
+--color-bestfirst: #e040fb;
+--color-minimax:   #ff4081;
+```
+
+These are used for: section dot, tag badge, Play button, chart line, explored cell overlay, path overlay, stat card accent value.
+
+---
+
+## Canvas Rendering Layers (frontend draw order — must be exact)
+
+1. Fill background `#0a0a0c`
+2. Draw grid lines (0.5px, `#111118`)
+3. Draw explored cells (accent color at 12% opacity)
+4. Draw path cells (accent color at 25% opacity)
+5. Draw snake body (index 1+): accent color at decreasing opacity (1.0 → 0.4)
+6. Draw snake head (index 0): full accent color + 2 white eye dots
+7. Draw food: red circle (`#ff4444`) with small highlight dot
+
+---
+
+## Definition of Done Checklist (agent self-check before marking ✅)
+
+Backend tasks:
+- [ ] Function runs without exceptions on a fresh game state
+- [ ] Returns correct types (check against spec.md data models)
+- [ ] No blocking calls inside async functions
+
+Frontend tasks:
+- [ ] Renders correctly in Chromium browser
+- [ ] No JS console errors
+- [ ] Screenshot attached as proof of visual work
 </file>
 
-<file path="model/metadata_ucs.json">
-{"algo": "ucs", "record": 27, "n_games": 2, "mean_score": 0.0, "timestamp": "2026-03-21 13:34:36"}
+<file path="README.md">
+# Deep Reinforcement Learning Snake Agent
+
+A Snake game where AI algorithms learn to play by themselves.
+Watch the agent go from dying in 2 moves to scoring 30+ over 100 games.
+
+Built for FT3 Application Development — SRMIST 2026.
+
+## Screenshots
+
+![Arena View](assets/2026-03-21_23-15-31.png)
+![Training Progress](assets/2026-03-21_23-15-41.png)
+![Algorithm Output](assets/2026-03-21_23-17-18.png)
+
+---
+
+## How It Works
+
+A Deep Q-Network (DQN) agent observes the game through 28 sensor inputs and decides whether to go straight, turn left, or turn right. It learns purely from trial and error — no rules, no hardcoded logic.
+
+Each section of the app pairs the DQN with a different classical search algorithm. The algorithm finds a path to food, the DQN decides whether to follow it or override it based on safety. This shows how the same RL agent behaves differently depending on the guidance it receives.
+
+---
+
+## Algorithms
+
+| Algorithm | Type | How It Guides the Snake | Expected Score (100 games) |
+|---|---|---|---|
+| Pure DQN | Reinforcement Learning | Learns entirely from rewards and penalties | 15 – 30 |
+| DQN + BFS | Informed Search | Shortest path to food, explores level by level | 25 – 45 |
+| DQN + DFS | Uninformed Search | Dives deep before backtracking, finds non-optimal paths | 20 – 35 |
+| DQN + UCS | Uninformed Search | Optimal path by cumulative cost (uniform grid = same as BFS) | 25 – 45 |
+| DQN + A* | Informed Search | Optimal path using Manhattan distance heuristic | 35 – 60 |
+| DQN + Best-First | Informed Search | Greedy — goes straight toward food, can get trapped | 20 – 40 |
+| DQN + Minimax | Adversarial Search | Treats board as a game vs a phantom blocker, alpha-beta pruning | 30 – 50 |
+
+---
+
+## State Vector — 28 Inputs
+
+The agent sees the world through 28 numbers:
+
+```
+[0–3]   Distance to wall in 4 directions        (float 0–1)
+[4–11]  Food visible in 8 directions            (bool 0/1)
+[12–19] Distance to own body in 8 directions    (float 0–1)
+[20–23] Current head direction                  (one-hot)
+[24–27] Current tail direction                  (one-hot)
+```
+
+Sensor logic adapted from SnakeQ by ludius0 (MIT License).
+
+---
+
+## Tech Stack
+
+- **Backend** — Python 3.11, FastAPI, WebSocket
+- **AI/ML** — PyTorch (DQN, Linear Q-Network)
+- **Frontend** — Vanilla HTML/CSS/JS, Chart.js, Canvas API
+- **Persistence** — `.pth` model weights + JSON metadata
+
+---
+
+## Run Locally
+
+```bash
+git clone https://github.com/YOUR_USERNAME/ai-snake-arena
+cd ai-snake-arena
+
+python -m venv venv
+source venv/bin/activate
+
+pip install fastapi uvicorn websockets numpy
+pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+Open `http://localhost:8000` in your browser.
+
+Click **Play** on any section. The agent starts dumb and gets smarter each game.
+Use **50x Speed** to train fast, then drop to **1x** to watch it play properly.
+
+---
+
+## Project Structure
+
+```
+ai-snake-arena/
+├── main.py               FastAPI app + WebSocket game loop
+├── game/
+│   ├── snake.py          16×16 grid, snake logic, collision
+│   ├── state.py          28-input state vector builder
+│   └── snake_sensors.py  8-direction vision rays
+├── agents/
+│   ├── rl_agent.py       DQN agent, Q-network, replay buffer
+│   ├── hybrid_agent.py   DQN + algorithm arbitration
+│   ├── bfs.py            Breadth-First Search solver
+│   ├── dfs.py            Depth-First Search solver
+│   ├── ucs.py            Uniform Cost Search solver
+│   ├── astar.py          A* Search solver
+│   ├── best_first.py     Greedy Best-First solver
+│   └── minimax.py        Minimax with alpha-beta pruning
+├── model/                Saved weights + training metadata
+└── frontend/
+    └── index.html        Single-file web UI
+```
+
+---
+
+Made by Iyad — SRMIST B.Tech CSE (AI & ML) 2028
+</file>
+
+<file path="spec.md">
+# spec.md — Deep Reinforcement Learning Snake Agent
+
+## Project Overview
+
+A web application demonstrating Reinforcement Learning and Classical AI algorithms through a live Snake game. A Deep Q-Network agent learns to play Snake in real time — the user watches it fail, improve, and eventually master the game. Below the hero, 6 additional sections each show a hybrid agent (DQN + one classical algorithm): BFS, DFS, UCS, A*, Best-First Search, and Minimax with Alpha-Beta Pruning. Each section is visually independent with its own live score graph and snake grid.
+
+**Problem statement:** Make AI/ML algorithms tangible and visual for an academic review — not theory, but a running demo where behavioral differences between algorithms are directly observable.
+
+---
+
+## Tech Stack
+
+| Layer | Choice | Justification |
+|---|---|---|
+| Backend | Python 3.11 + FastAPI | Course requirement, async, WebSocket native |
+| ML | PyTorch | DQN, Linear_QNet, model save/load |
+| Realtime | WebSocket (FastAPI) | Streams game state at game speed |
+| Frontend | Vanilla HTML + CSS + JS | Zero build step, single file, runs anywhere |
+| Canvas | HTML5 Canvas API | Smooth 2D grid rendering |
+| Charts | Chart.js via CDN | Live score vs games line chart |
+| Persistence | .pth + metadata JSON | Survives server restarts |
+
+---
+
+## Folder Structure
+
+```
+ai-snake-arena/
+├── main.py
+├── game/
+│   ├── __init__.py
+│   ├── snake.py               # Grid, snake, food, collision, reset
+│   └── state.py               # 27-input state vector builder
+├── agents/
+│   ├── __init__.py
+│   ├── rl_agent.py            # Pure DQN: Q-network, epsilon-greedy, replay buffer
+│   ├── bfs.py                 # BFS solver → next action + explored cells
+│   ├── dfs.py                 # DFS solver → next action + explored cells
+│   ├── ucs.py                 # UCS solver → next action + path cost
+│   ├── astar.py               # A* solver (f=g+h) → next action + path
+│   ├── best_first.py          # Greedy Best-First → next action
+│   ├── minimax.py             # Minimax + alpha-beta pruning → next action
+│   └── hybrid_agent.py        # DQN + any solver, arbitration logic
+├── model/
+│   ├── model_dqn.pth
+│   ├── model_bfs.pth
+│   ├── model_dfs.pth
+│   ├── model_ucs.pth
+│   ├── model_astar.pth
+│   ├── model_bestfirst.pth
+│   ├── model_minimax.pth
+│   └── metadata_{algo}.json   # Per-algo: games, record, mean score
+├── frontend/
+│   └── index.html             # Single file: hero + 7 sections
+├── requirements.txt
+└── README.md
+```
+
+---
+
+## Data Models
+
+### State vector — 27 inputs
+
+```
+[0-2]   danger straight, danger right, danger left          (bool → 0/1)
+[3-6]   direction LEFT, RIGHT, UP, DOWN                     (bool → 0/1)
+[7-10]  food left, food right, food up, food down           (bool → 0/1)
+[11-18] wall distance in 8 directions (N NE E SE S SW W NW) (float 0–1)
+[19-26] nearest body distance in 8 directions               (float 0–1, 1.0 = no body)
+```
+
+### Q-Network
+
+```
+Linear(27 → 256) → ReLU → Linear(256 → 256) → ReLU → Linear(256 → 3)
+Output actions: [go straight, turn right, turn left]
+```
+
+### WebSocket — server → client (each game step)
+
+```json
+{
+  "type": "step",
+  "algo": "bfs",
+  "snake": [[8,8],[7,8],[6,8]],
+  "food": [12,5],
+  "score": 3,
+  "game_no": 47,
+  "record": 31,
+  "mean_score": 8.4,
+  "epsilon": 0.33,
+  "explored": [[9,8],[10,8],[9,9]],
+  "path": [[9,8],[10,8],[11,8],[12,5]],
+  "algo_stat": { "label": "nodes", "value": 38 },
+  "done": false
+}
+```
+
+### WebSocket — client → server
+
+```json
+{ "type": "start", "algo": "dqn", "speed": 10 }
+{ "type": "stop" }
+{ "type": "set_speed", "speed": 50 }
+```
+
+### metadata_{algo}.json
+
+```json
+{ "algo": "bfs", "record": 42, "n_games": 23, "mean_score": 14.2, "timestamp": "2026-03-25 10:00:00" }
+```
+
+---
+
+## API Contracts
+
+| Endpoint | Method | Description |
+|---|---|---|
+| `/` | GET | Serves frontend/index.html |
+| `/ws/{algo}` | WebSocket | Live game stream for given algo |
+| `/model/reset/{algo}` | POST | Deletes weights + resets metadata |
+| `/model/status` | GET | Returns all algo metadata |
+
+Valid algo values: `dqn`, `bfs`, `dfs`, `ucs`, `astar`, `bestfirst`, `minimax`
+
+---
+
+## Algorithm Specs
+
+### Pure DQN
+- 27 inputs, hidden 256×2, 3 outputs
+- Memory: deque(100,000), batch: 1,000, LR: 0.001, gamma: 0.9
+- Epsilon: 1.0 → 0.01 over 80 games
+- algo_stat: `{ label: "epsilon", value: 0.33 }`
+
+### Hybrid arbitration (hybrid_agent.py)
+1. Run algo solver → get `path` and `explored`
+2. If valid path exists → follow algo's next step as primary action
+3. DQN evaluates same state → if DQN disagrees strongly, override
+4. DQN trains every step regardless (experience still collected)
+5. algo_stat varies per algo (see below)
+
+### Per-algo stat labels
+- BFS: `{ label: "nodes", value: N }` — cells explored
+- DFS: `{ label: "nodes", value: N }` — cells explored
+- UCS: `{ label: "cost", value: N }` — path cost
+- A*: `{ label: "path", value: N }` — path length
+- Best-First: `{ label: "h", value: N }` — heuristic at current head
+- Minimax: `{ label: "depth", value: N }` — search depth reached
+
+### Minimax
+- Snake = maximiser, phantom blocker agent = minimiser
+- Depth limit: 4 (keeps real-time performance)
+- Alpha-beta pruning enabled
+
+---
+
+## Frontend Architecture
+
+`frontend/index.html` — single file, no build step.
+
+```
+hero section        animated snake canvas bg, title, chips, scroll CTA
+nav strip           sticky: Pure DQN | DQN+BFS | DQN+DFS | DQN+UCS | DQN+A* | DQN+Best-First | DQN+Minimax
+algo-section × 7    identical layout per section:
+  left panel        Chart.js: score line + running mean dashed line
+  right panel       canvas grid + Play/Stop + speed select + 4 stat cards
+```
+
+Per-section JS:
+- Play → open `/ws/{algo}`, send start message, render loop begins
+- Stop → send stop, close WS
+- Each `step` message → redraw canvas + Chart.js push + update stat cards
+- Speed select → send `set_speed`
+- Canvas layers: grid → explored cells (dim) → path (bright) → snake → food
+
+Accent colors:
+```
+dqn:       #7c6ef7  purple
+bfs:       #3b9eff  blue
+dfs:       #ff7043  orange
+ucs:       #26c6a0  teal
+astar:     #ffd740  amber
+bestfirst: #e040fb  magenta
+minimax:   #ff4081  pink-red
+```
+
+---
+
+## Constraints
+
+- Grid: 16×16
+- Game loop runs server-side in Python
+- Speed: 1x=5fps, 2x=10fps, 10x=50fps, 50x=200fps
+- Each algo section has independent game loop and WS connection
+- Model saves only when new record is set
+- No database — .pth + .json only
+- Runs locally: `python main.py` → `localhost:8000`
+
+---
+
+## Non-Goals (v1)
+
+- No auth, no user accounts
+- No CSP graph coloring (removed per user decision)
+- No cloud deployment
+- No CNN state (27-input flat vector only)
+- No mobile layout
+
+---
+
+## Definition of Done
+
+- [ ] `python main.py` → browser opens, hero visible
+- [ ] All 7 sections render on scroll
+- [ ] Play/Stop works on every section independently
+- [ ] Score graph updates live as games run
+- [ ] Speed selector changes game pace
+- [ ] Pure DQN visibly improves over 50–100 games
+- [ ] Hybrid sections show explored cell overlay
+- [ ] Model persists across server restart
+- [ ] All 7 algorithms run without crashes
 </file>
 
 <file path="main.py">
@@ -2219,12 +2224,12 @@ async def game_loop(ws: WebSocket, algo: str, speed_ref: dict):
             fps = SPEED_FPS[str(speed_ref.get("speed", 10))]
             delay = 1.0 / fps
             
-            state_old = build_state(game, extended=True)
-            
+            state_old = build_state(game, extended=False)
+
             final_move, explored, path, algo_stat = agent.get_action(game, state_old)
-            
+
             reward, done, score = game.play_step(final_move)
-            state_new = build_state(game, extended=True)
+            state_new = build_state(game, extended=False)
             
             agent.train_short_memory(state_old, final_move, reward, state_new, done)
             agent.remember(state_old, final_move, reward, state_new, done)
@@ -2309,7 +2314,7 @@ async def websocket_endpoint(websocket: WebSocket, algo: str):
 </file>
 
 <file path="task.md">
-# task.md — AI Snake Arena
+# task.md — Deep Reinforcement Learning Snake Agent
 
 ## Milestone M1 — Foundation
 
@@ -2345,7 +2350,7 @@ async def websocket_endpoint(websocket: WebSocket, algo: str):
 | ID | Title | Description | Tag | Depends On | Status | Note |
 |----|-------|-------------|-----|------------|--------|------|
 | M3-01 | HTML skeleton | Create frontend/index.html: dark base styles, CSS variables for all 7 accent colors, font imports, hero section, nav strip, 7 algo-section divs with correct IDs and data-algo attributes. | [frontend] | M1-01 | ✅ | Implemented single file index.html with theme CSS variables |
-| M3-02 | Hero section | Build hero: full-width dark section, animated snake canvas background (snake crawls across grid using JS setInterval), title "AI Snake Arena", subtitle, tech chips (PyTorch, DQN, 27-input, FastAPI, WebSocket, BFS, A*, Minimax), scroll CTA arrow. | [frontend] | M3-01 | ✅ | "Hero rebuilt: video bg + GSAP scroll-pinned text reveal, 6-line sequence, scroll unlock to algo sections" |
+| M3-02 | Hero section | Build hero: full-width dark section, animated snake canvas background (snake crawls across grid using JS setInterval), title "Deep Reinforcement Learning Snake Agent", subtitle, tech chips (PyTorch, DQN, 27-input, FastAPI, WebSocket, BFS, A*, Minimax), scroll CTA arrow. | [frontend] | M3-01 | ✅ | "Hero rebuilt: video bg + GSAP scroll-pinned text reveal, 6-line sequence, scroll unlock to algo sections" |
 | M3-03 | Nav strip | Sticky nav below hero: 7 pill buttons (Pure DQN, DQN+BFS, etc.). Click scrolls to section. Active pill highlights as user scrolls (IntersectionObserver). | [frontend] | M3-01 | ✅ | Added sticky Nav strip and IntersectionObserver for highlight |
 | M3-04 | Algo section layout | Each of 7 sections: section header (colored dot + algo name + tag badge + description), 50/50 split layout (left=chart panel, right=snake panel). All 7 sections share same CSS classes, differentiated by accent color CSS variable. | [frontend] | M3-01 | ✅ | Generated 7 sections locally styled correctly |
 | M3-05 | Snake canvas renderer | JS function renderFrame(ctx, frameData, accentColor): draws grid lines, explored cells (dim accent overlay), path cells (brighter overlay), snake body (head distinct, body fading opacity), food (circle). Called on every step message. | [frontend] | M3-04 | ✅ | Implemented `renderFrame()` executing all 7 distinct layer drawings |
@@ -2373,7 +2378,7 @@ async def websocket_endpoint(websocket: WebSocket, algo: str):
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>AI Snake Arena</title>
+  <title>Deep Reinforcement Learning Snake Agent</title>
   <style>
     :root {
       /* Accent Color Map */
@@ -2810,7 +2815,7 @@ async def websocket_endpoint(websocket: WebSocket, algo: str):
 #hl-1 {
   opacity: 0;
   transform: translateY(32px);
-  font-size: clamp(2.8rem, 7vw, 5rem);
+  font-size: clamp(2rem, 5vw, 3.5rem);
   font-weight: 800;
   letter-spacing: -0.04em;
   color: #ffffff;
@@ -2910,7 +2915,7 @@ body.scroll-locked {
 
     <div id="hero-text-container">
       <p id="hl-eyebrow">SRMIST · FT3 · AI Project 2026</p>
-      <h1 id="hl-1">AI Snake Arena</h1>
+      <h1 id="hl-1">Deep Reinforcement Learning Snake Agent</h1>
       <p id="hl-2">Reinforcement Learning meets Classical AI</p>
       <p id="hl-3">
         A Deep Q-Network agent learns to play Snake from scratch.
@@ -3278,11 +3283,14 @@ body.scroll-locked {
         if (wsConnections[algoId]) wsConnections[algoId].setSpeed(speed);
     };
 
-    // --- Init: Render blank boards, setup observers ---
+    // --- Init: Render blank boards, setup observers, and reset backend ---
     ALGOS.forEach(algo => {
         initChart(algo.id, ACCENTS[algo.id]);
         const ctx = document.getElementById(`canvas-${algo.id}`).getContext('2d');
         renderFrame(ctx, {}, ACCENTS[algo.id]);
+        
+        // Wipe saved backend data so stats start at 0 on every refresh
+        fetch(`/model/reset/${algo.id}`, { method: 'POST' }).catch(err => console.error('Reset failed:', err));
     });
 
 

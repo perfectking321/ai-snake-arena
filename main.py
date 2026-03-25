@@ -25,7 +25,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-SPEED_FPS = { "1": 5, "2": 10, "10": 50, "50": 200 }
+SPEED_FPS = { "1": 5, "2": 10, "10": 50, "50": 200, "100": 500 }
 
 @app.get("/")
 async def get_index():
@@ -75,12 +75,12 @@ async def game_loop(ws: WebSocket, algo: str, speed_ref: dict):
             fps = SPEED_FPS[str(speed_ref.get("speed", 10))]
             delay = 1.0 / fps
             
-            state_old = build_state(game, extended=True)
-            
+            state_old = build_state(game, extended=False)
+
             final_move, explored, path, algo_stat = agent.get_action(game, state_old)
-            
+
             reward, done, score = game.play_step(final_move)
-            state_new = build_state(game, extended=True)
+            state_new = build_state(game, extended=False)
             
             agent.train_short_memory(state_old, final_move, reward, state_new, done)
             agent.remember(state_old, final_move, reward, state_new, done)
